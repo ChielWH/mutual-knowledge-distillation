@@ -1,10 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Tue Jul 23 10:45:48 2019
-
-@author: chxy
-"""
-
 import torch
 import torchvision
 import torch.nn as nn
