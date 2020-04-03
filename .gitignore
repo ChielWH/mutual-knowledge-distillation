@@ -1,0 +1,7 @@
+data/cifar100/cifar-100-python/meta
+data/cifar100/cifar-100-python/test
+data/cifar100/cifar-100-python/train
+*.ipyn_checkpoints
+*.DS_store
+*.gz
+*.tar
