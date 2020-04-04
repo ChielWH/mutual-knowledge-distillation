@@ -1,7 +1,11 @@
 data/cifar100/cifar-100-python/meta
 data/cifar100/cifar-100-python/test
 data/cifar100/cifar-100-python/train
+logs/*
+*.json
 *.ipyn_checkpoints
+*.ipynb
+*.pyc
 *.DS_store
 *.gz
 *.tar
