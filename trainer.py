@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import torch
 import torchvision
 import torch.nn as nn
@@ -56,6 +55,9 @@ class Trainer(object):
         self.weight_decay = config.weight_decay
         self.nesterov = config.nesterov
         self.gamma = config.gamma
+        self.lambda_a = config.lambda_a
+        self.lambda_b = config.lambda_b
+        self.temperature = config.temperature
         # misc params
         self.use_gpu = config.use_gpu
         self.best = config.best
@@ -101,7 +103,8 @@ class Trainer(object):
             self.optimizers.append(optimizer)
 
             # set learning rate decay
-            scheduler = optim.lr_scheduler.StepLR(self.optimizers[i], step_size=60, gamma=self.gamma, last_epoch=-1)
+            scheduler = optim.lr_scheduler.StepLR(
+                self.optimizers[i], step_size=60, gamma=self.gamma, last_epoch=-1)
             self.schedulers.append(scheduler)
 
         print('[*] Number of parameters of one model: {:,}'.format(
@@ -144,18 +147,20 @@ class Trainer(object):
                 msg1 = "model_{:d}: train loss: {:.3f} - train acc: {:.3f} "
                 msg2 = "- val loss: {:.3f} - val acc: {:.3f}"
                 if is_best:
-                    #self.counter = 0
+                    # self.counter = 0
                     msg2 += " [*]"
                 msg = msg1 + msg2
-                print(msg.format(i + 1, train_losses[i].avg, train_accs[i].avg, valid_losses[i].avg, valid_accs[i].avg))
+                print(msg.format(
+                    i + 1, train_losses[i].avg, train_accs[i].avg, valid_losses[i].avg, valid_accs[i].avg))
 
             # check for improvement
             # if not is_best:
-                #self.counter += 1
+                # self.counter += 1
             # if self.counter > self.train_patience:
-                #print("[!] No improvement in a while, stopping training.")
+                # print("[!] No improvement in a while, stopping training.")
                 # return
-                self.best_valid_accs[i] = max(valid_accs[i].avg, self.best_valid_accs[i])
+                self.best_valid_accs[i] = max(
+                    valid_accs[i].avg, self.best_valid_accs[i])
                 self.save_checkpoint(i,
                                      {'epoch': epoch + 1,
                                       'model_state': self.models[i].state_dict(),
@@ -184,26 +189,37 @@ class Trainer(object):
 
         tic = time.time()
         with tqdm(total=self.num_train) as pbar:
-            for i, (images, labels) in enumerate(self.train_loader):
+            for i, batch in enumerate(self.train_loader):
+                images, true_labels, psuedo_labels = batch
                 if self.use_gpu:
-                    images, labels = images.cuda(), labels.cuda()
-                images, labels = Variable(images), Variable(labels)
+                    images, true_labels, psuedo_labels = images.cuda(
+                    ), true_labels.cuda(), psuedo_labels.cuda()
+                images, true_labels = Variable(images), Variable(true_labels)
 
                 # forward pass
                 outputs = []
                 for model in self.models:
                     outputs.append(model(images))
                 for i in range(self.model_num):
-                    ce_loss = self.loss_ce(outputs[i], labels)
-                    kl_loss = 0
+                    sl_signal = self.loss_ce(outputs[i], true_labels)
+                    kd_signal = nn.KLDivLoss()(F.log_softmax(outputs[i] / self.temperature, dim=1),
+                                               F.softmax(psuedo_labels[:, :, i] / self.temperature, dim=1))
+                    dml_signal = 0
                     for j in range(self.model_num):
                         if i != j:
-                            kl_loss += self.loss_kl(F.log_softmax(outputs[i], dim=1),
-                                                    F.softmax(Variable(outputs[j]), dim=1))
-                    loss = ce_loss + kl_loss / (self.model_num - 1)
+                            dml_signal += self.loss_kl(F.log_softmax(outputs[i], dim=1),
+                                                       F.softmax(Variable(outputs[j]), dim=1))
+
+                    sl_part = (1 - self.lambda_a) * sl_signal
+                    kd_part = (1 - self.lambda_b) * self.lambda_a * \
+                        self.temperature * self.temperature * kd_signal
+                    dml_part = self.lambda_b * \
+                        (dml_signal / (self.model_num - 1))
+                    loss = sl_part + kd_part + dml_part
 
                     # measure accuracy and record loss
-                    prec = accuracy(outputs[i].data, labels.data, topk=(1,))[0]
+                    prec = accuracy(outputs[i].data,
+                                    true_labels.data, topk=(1,))[0]
                     losses[i].update(loss.item(), images.size()[0])
                     accs[i].update(prec.item(), images.size()[0])
 
@@ -230,8 +246,10 @@ class Trainer(object):
                 if self.use_tensorboard:
                     iteration = epoch * len(self.train_loader) + i
                     for i in range(self.model_num):
-                        log_value('train_loss_%d' % (i + 1), losses[i].avg, iteration)
-                        log_value('train_acc_%d' % (i + 1), accs[i].avg, iteration)
+                        log_value('train_loss_%d' %
+                                  (i + 1), losses[i].avg, iteration)
+                        log_value('train_acc_%d' %
+                                  (i + 1), accs[i].avg, iteration)
 
             return losses, accs
 
@@ -330,42 +348,3 @@ class Trainer(object):
             shutil.copyfile(
                 ckpt_path, os.path.join(self.ckpt_dir, filename)
             )
-
-    '''def load_checkpoint(self, best=False):
-        """
-        Load the best copy of a model. This is useful for 2 cases:
-
-        - Resuming training with the most recent model checkpoint.
-        - Loading the best validation model to evaluate on the test data.
-
-        Params
-        ------
-        - best: if set to True, loads the best model. Use this if you want
-          to evaluate your model on the test data. Else, set to False in
-          which case the most recent version of the checkpoint is used.
-        """
-        print("[*] Loading model from {}".format(self.ckpt_dir))
-
-        filename = self.model_name + '_ckpt.pth.tar'
-        if best:
-            filename = self.model_name + '_model_best.pth.tar'
-        ckpt_path = os.path.join(self.ckpt_dir, filename)
-        ckpt = torch.load(ckpt_path)
-
-        # load variables from checkpoint
-        self.start_epoch = ckpt['epoch']
-        self.best_valid_acc = ckpt['best_valid_acc']
-        self.model.load_state_dict(ckpt['model_state'])
-        self.optimizer.load_state_dict(ckpt['optim_state'])
-
-        if best:
-            print(
-                "[*] Loaded {} checkpoint @ epoch {} "
-                "with best valid acc of {:.3f}".format(
-                    filename, ckpt['epoch'], ckpt['best_valid_acc'])
-            )
-        else:
-            print(
-                "[*] Loaded {} checkpoint @ epoch {}".format(
-                    filename, ckpt['epoch'])
-            )'''

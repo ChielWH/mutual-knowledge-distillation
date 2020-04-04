@@ -12,13 +12,14 @@ parser = argparse.ArgumentParser(description='mobilenet_classification')
 
 
 def str2bool(v):
-    return v.lower() in ('true', '1')
+  return v.lower() in ('true', '1')
 
 
 def add_argument_group(name):
-    arg = parser.add_argument_group(name)
-    arg_lists.append(arg)
-    return arg
+  arg = parser.add_argument_group(name)
+  arg_lists.append(arg)
+  return arg
+
 
 # data params
 data_arg = add_argument_group('Data Params')
@@ -54,6 +55,12 @@ train_arg.add_argument('--train_patience', type=int, default=100,
                        help='Number of epochs to wait before stopping train')
 train_arg.add_argument('--gamma', type=float, default=0.1,
                        help='value of learning rate decay')
+train_arg.add_argument('--lambda_a', type=float, default=0.5,
+                       help='balance between sl signal and the additional signals')
+train_arg.add_argument('--lambda_b', type=float, default=0.5,
+                       help='balance between kd signal and the dml signals')
+train_arg.add_argument('--temperature', type=float, default=3,
+                       help='softmax temperature')
 
 # other params
 misc_arg = add_argument_group('Misc.')
@@ -69,7 +76,7 @@ misc_arg.add_argument('--ckpt_dir', type=str, default='./ckpt',
                       help='Directory in which to save model checkpoints')
 misc_arg.add_argument('--logs_dir', type=str, default='./logs/',
                       help='Directory in which Tensorboard logs wil be stored')
-misc_arg.add_argument('--use_tensorboard', type=str2bool, default=True,
+misc_arg.add_argument('--use_tensorboard', type=str2bool, default=False,
                       help='Whether to use tensorboard for visualization')
 misc_arg.add_argument('--resume', type=str2bool, default=False,
                       help='Whether to resume training from checkpoint')
@@ -80,6 +87,7 @@ misc_arg.add_argument('--save_name', type=str, default='model',
 misc_arg.add_argument('--model_num', type=int, default=2,
                       help='Number of models to train for DML')
 
+
 def get_config():
-    config, unparsed = parser.parse_known_args()
-    return config, unparsed
+  config, unparsed = parser.parse_known_args()
+  return config, unparsed
