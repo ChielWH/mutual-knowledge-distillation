@@ -1,6 +1,7 @@
 data/*
 !data/README.md
 logs/*
+_config.yml
 *.json
 *.ipyn_checkpoints
 *.ipynb
