@@ -1,9 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Wed Jul 10 14:12:10 2019
-
-@author: chxy
-"""
 from tqdm import tqdm
 import numpy as np
 
