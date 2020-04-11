@@ -1,10 +1,7 @@
 data/*
-!data/README.md
 logs/*
-*.json
-*.ipyn_checkpoints
-*.ipynb
+ckpt/*
+!*/README.md
+*.ipynb*
 *.pyc
 *.DS_store
-*.gz
-*.tar
