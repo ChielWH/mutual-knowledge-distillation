@@ -3,6 +3,7 @@ import json
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+from model_factories import efficientnet_factory, mobilenetv2_factory, resnet_factory
 
 from PIL import Image
 
@@ -10,11 +11,13 @@ from PIL import Image
 def denormalize(T, coords):
     return (0.5 * ((coords + 1.0) * T))
 
+
 class AverageMeter(object):
     """
     Computes and stores the average and
     current value.
     """
+
     def __init__(self):
         self.reset()
 
@@ -30,6 +33,7 @@ class AverageMeter(object):
         self.count += n
         self.avg = self.sum / self.count
 
+
 def accuracy(output, target, topk=(1,)):
     """Computes the precision@k for the specified values of k"""
     maxk = max(topk)
@@ -44,6 +48,7 @@ def accuracy(output, target, topk=(1,)):
         correct_k = correct[:k].view(-1).float().sum(0)
         res.append(correct_k.mul_(100.0 / batch_size))
     return res
+
 
 def resize_array(x, size):
     # 3D and 4D tensors allowed only
@@ -105,6 +110,7 @@ def array2img(x):
     x *= 255
     return Image.fromarray(x.astype('uint8'), 'RGB')
 
+
 def prepare_dirs(config):
     for path in [config.ckpt_dir, config.logs_dir]:
         if not os.path.exists(path):
@@ -121,3 +127,42 @@ def save_config(config):
 
     with open(param_path, 'w') as fp:
         json.dump(config.__dict__, fp, indent=4, sort_keys=True)
+
+
+def correct_out_features(model, out_features):
+    import torch
+    for idx, module in reversed(list(enumerate(model.modules()))):
+        if type(module) == torch.nn.modules.linear.Linear:
+            in_features = module.in_features
+            bias = type(module.bias) == torch.nn.parameter.Parameter
+            setattr(model, list(model.named_modules())[idx][0], torch.nn.Linear(
+                in_features, out_features, bias=bias))
+
+
+def infer_input_size(batch):
+    return batch[0].shape[2]
+
+
+def model_init(model_name, use_gpu, input_size, num_classes):
+    model_architecture = model_name[:2]
+    assert model_architecture in {'EF', 'MN', 'RN'}
+    size_indicator = model_name[2:]
+    if model_architecture == 'EF':
+        net = efficientnet_factory.create_model(size_indicator)
+        correct_out_features(net, num_classes)
+    elif model_architecture == 'MN':
+        net = mobilenetv2_factory.create_model(size=size_indicator,
+                                               input_size=input_size,
+                                               num_classes=num_classes)
+    elif model_architecture == 'RN':
+        net = resnet_factory.create_model(size_indicator)
+        correct_out_features(net, num_classes)
+    if use_gpu:
+        net.cuda()
+    return net
+
+
+if __name__ == '__main__':
+    model_init('EFB6')
+    model_init('RN302')
+    model_init('MN35')

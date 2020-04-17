@@ -5,3 +5,5 @@ ckpt/*
 *.ipynb*
 *.pyc
 *.DS_store
+*__pycache__
+personal_utils.py

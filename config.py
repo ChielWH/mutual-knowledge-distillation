@@ -1,14 +1,7 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Tue Jul 23 10:32:34 2019
-
-@author: chxy
-"""
-
 import argparse
 
 arg_lists = []
-parser = argparse.ArgumentParser(description='mobilenet_classification')
+parser = argparse.ArgumentParser(description='Mutual Knowledge Distillation')
 
 
 def str2bool(v):
@@ -64,8 +57,8 @@ train_arg.add_argument('--temperature', type=float, default=3,
 
 # other params
 misc_arg = add_argument_group('Misc.')
-misc_arg.add_argument('--use_gpu', type=str2bool, default=True,
-                      help="Whether to run on the GPU")
+misc_arg.add_argument('--disable_cuda', type=str2bool, default=False,
+                      help="Whether disable the GPU, if False, GPU will be utilized if available")
 misc_arg.add_argument('--best', type=str2bool, default=False,
                       help='Load best model or most recent for testing')
 misc_arg.add_argument('--random_seed', type=int, default=1,
@@ -86,6 +79,11 @@ misc_arg.add_argument('--save_name', type=str, default='model',
                       help='Name of the model to save as')
 misc_arg.add_argument('--model_num', type=int, default=2,
                       help='Number of models to train for DML')
+misc_arg.add_argument('--model_names', nargs='+', default=['RN14', 'MN20', 'EFB0'],
+                      help='The abbreviation of the model name with size indicator',
+                      choices=['EFB0', 'EFB1', 'EFB2', 'EFB3', 'EFB4', 'EFB5', 'EFB6', 'EFB7',
+                               'MN20', 'MN30', 'MN40', 'MN50', 'MN60', 'MN70', 'MN85', 'MN100',
+                               'RN14', 'RN20', 'RN32', 'RN44', 'RN52', 'RN110', 'RN200', 'RN302'])
 
 
 def get_config():

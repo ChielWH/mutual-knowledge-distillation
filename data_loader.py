@@ -1,3 +1,4 @@
+import inspect
 from tqdm import tqdm
 import numpy as np
 
@@ -11,10 +12,12 @@ class PsuedoLabelledDataset(torch.utils.data.Dataset):
 
     def __init__(self,
                  data_dir,
+                 trans,
                  batch_size=16,
                  cifar='100',
                  download=False,
                  train=True,
+                 model_num=3,
                  teachers=[],
                  cuda=False):
         """
@@ -23,15 +26,6 @@ class PsuedoLabelledDataset(torch.utils.data.Dataset):
         self.teacher_num = len(teachers)
 
         device = torch.device('cuda') if cuda else torch.device('cpu')
-
-        # define transforms
-        trans = transforms.Compose([
-            transforms.RandomCrop(32, padding=4),
-            transforms.RandomHorizontalFlip(),
-            transforms.RandomRotation(degrees=15),
-            transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-        ])
 
         # get the correct CIFAR dataset
         cifar_dataset = getattr(datasets, f'CIFAR{cifar}')
@@ -42,8 +36,11 @@ class PsuedoLabelledDataset(torch.utils.data.Dataset):
         data_loader = torch.utils.data.DataLoader(
             dataset, batch_size=batch_size)
 
-        if teachers:
+        # get the fold by inspecting the function that instantiates the class
+        caller = inspect.stack()[1][3]
+        fold = 'train' if caller == 'get_train_loader' else 'test'
 
+        if teachers:
             # prepare and assert the teachers behaviour
             sample_batch = next(iter(data_loader))[0].to(device)
             for teacher in teachers:
@@ -54,7 +51,7 @@ class PsuedoLabelledDataset(torch.utils.data.Dataset):
             # create the psuedo labels
             with tqdm(total=len(data_loader) * batch_size) as pbar:
                 pbar.set_description(
-                    f'Preparing dataset: creating the psuedo labels from {self.teacher_num} teachers')
+                    f'Preparing {fold}set: creating the psuedo labels from {self.teacher_num} teachers')
                 with torch.no_grad():
                     for images, labels in data_loader:
                         if cuda:
@@ -73,9 +70,8 @@ class PsuedoLabelledDataset(torch.utils.data.Dataset):
         else:
             with tqdm(total=len(data_loader) * batch_size) as pbar:
                 pbar.set_description(
-                    f'Preparing datatset')
-                # to let it be compatible with the collate_fn for naming tensors
-                dummy_psuedo_label = torch.empty(int(cifar), 1)
+                    f'Preparing {fold}set')
+                dummy_psuedo_label = torch.empty(int(cifar), model_num)
                 for images, labels in data_loader:
                     for image, label in zip(images, labels):
                         self.named_dataset.append(
@@ -93,7 +89,7 @@ def get_train_loader(data_dir,
                      batch_size,
                      cifar='100',
                      download=False,
-                     fold='train',
+                     model_num=3,
                      teachers=[],
                      cuda=False,
                      random_seed=2020,
@@ -103,9 +99,7 @@ def get_train_loader(data_dir,
     """
     Utility function for loading and returning a multi-process
     train iterator over the CIFAR100 dataset.
-
     If using CUDA, num_workers should be set to 1 and pin_memory to True.
-
     Args
     ----
     - data_dir: path directory to the dataset.
@@ -114,44 +108,51 @@ def get_train_loader(data_dir,
     -------
     - data_loader: train set iterator.
     """
-    if fold == 'train':
-        train_bool = True
-    elif fold == 'valid':
-        train_bool = False
-    else:
-        raise ValueError("fold must be either 'train' or 'valid'")
+    # define transforms
+    trans = transforms.Compose([
+        transforms.RandomCrop(32, padding=4),
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomRotation(degrees=15),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ])
 
-    # load dataset
     dataset = PsuedoLabelledDataset(data_dir=data_dir,
+                                    trans=trans,
                                     batch_size=batch_size,
                                     cifar=cifar,
                                     download=download,
-                                    train=train_bool,
+                                    train=True,
                                     teachers=teachers,
                                     cuda=cuda)
 
     if shuffle:
         np.random.seed(random_seed)
 
-    train_loader = torch.utils.data.DataLoader(dataset,
-                                               batch_size=batch_size,
-                                               shuffle=shuffle,
-                                               num_workers=num_workers,
-                                               pin_memory=pin_memory)
+    data_laoder = torch.utils.data.DataLoader(dataset,
+                                              batch_size=batch_size,
+                                              shuffle=shuffle,
+                                              num_workers=num_workers,
+                                              pin_memory=pin_memory)
 
-    return train_loader
+    return data_laoder
 
 
 def get_test_loader(data_dir,
                     batch_size,
+                    cifar='100',
+                    download=False,
+                    model_num=3,
+                    teachers=[],
+                    cuda=False,
+                    random_seed=2020,
+                    shuffle=True,
                     num_workers=4,
                     pin_memory=True):
     """
     Utility function for loading and returning a multi-process
     test iterator over the CIFAR100 dataset.
-
     If using CUDA, num_workers should be set to 1 and pin_memory to True.
-
     Args
     ----
     - data_dir: path directory to the dataset.
@@ -159,7 +160,6 @@ def get_test_loader(data_dir,
     - num_workers: number of subprocesses to use when loading the dataset.
     - pin_memory: whether to copy tensors into CUDA pinned memory. Set it to
       True if using GPU.
-
     Returns
     -------
     - data_loader: test set iterator.
@@ -172,13 +172,22 @@ def get_test_loader(data_dir,
     ])
 
     # load dataset
-    dataset = datasets.CIFAR100(
-        data_dir, train=False, download=False, transform=trans
-    )
+    dataset = PsuedoLabelledDataset(data_dir=data_dir,
+                                    trans=trans,
+                                    batch_size=batch_size,
+                                    cifar=cifar,
+                                    download=download,
+                                    train=False,
+                                    teachers=teachers,
+                                    cuda=cuda)
 
-    data_loader = torch.utils.data.DataLoader(
-        dataset, batch_size=batch_size, shuffle=False,
-        num_workers=num_workers, pin_memory=pin_memory,
-    )
+    if shuffle:
+        np.random.seed(random_seed)
+
+    data_loader = torch.utils.data.DataLoader(dataset,
+                                              batch_size=batch_size,
+                                              shuffle=shuffle,
+                                              num_workers=num_workers,
+                                              pin_memory=pin_memory)
 
     return data_loader

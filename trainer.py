@@ -9,11 +9,15 @@ import torch.nn.functional as F
 import os
 import time
 import shutil
+import warnings
 
 from tqdm import tqdm
-from utils import accuracy, AverageMeter
-from resnet import resnet32
+from utils import accuracy, AverageMeter, model_init, infer_input_size
 from tensorboard_logger import configure, log_value
+
+# get rid of the torch.nn.KLDivLoss(reduction='batchmean') warning
+warnings.filterwarnings(
+    "ignore", message="reduction: 'mean' divides the total loss by both the batch size and the support size.")
 
 
 class Trainer(object):
@@ -42,9 +46,12 @@ class Trainer(object):
             self.valid_loader = data_loader[1]
             self.num_train = len(self.train_loader.dataset)
             self.num_valid = len(self.valid_loader.dataset)
+            batch = next(iter(self.train_loader))
         else:
             self.test_loader = data_loader
             self.num_test = len(self.test_loader.dataset)
+            batch = next(iter(self.test_loader))
+        self.input_size = infer_input_size(batch)
         self.num_classes = config.num_classes
 
         # training params
@@ -58,8 +65,12 @@ class Trainer(object):
         self.lambda_a = config.lambda_a
         self.lambda_b = config.lambda_b
         self.temperature = config.temperature
+
         # misc params
-        self.use_gpu = config.use_gpu
+        if not config.disable_cuda and torch.cuda.is_available():
+            self.use_gpu = True
+        else:
+            self.use_gpu = False
         self.best = config.best
         self.ckpt_dir = config.ckpt_dir
         self.logs_dir = config.logs_dir
@@ -71,14 +82,23 @@ class Trainer(object):
         self.print_freq = config.print_freq
         self.model_name = config.save_name
 
-        self.model_num = config.model_num
-        self.models = []
+        # model specific params
+        self.model_names = config.model_names
+        self.nets = [model_init(model_name,
+                                self.use_gpu,
+                                self.input_size,
+                                self.num_classes)
+                     for model_name in self.model_names]
+        self.model_num = len(self.model_names)
+
+        # list and func initializations
         self.optimizers = []
         self.schedulers = []
 
+        self.best_valid_accs = [0.] * self.model_num
+
         self.loss_kl = nn.KLDivLoss(reduction='batchmean')
         self.loss_ce = nn.CrossEntropyLoss()
-        self.best_valid_accs = [0.] * self.model_num
 
         # configure tensorboard logging
         if self.use_tensorboard:
@@ -88,16 +108,9 @@ class Trainer(object):
                 os.makedirs(tensorboard_dir)
             configure(tensorboard_dir)
 
-        for i in range(self.model_num):
-            # build models
-            model = resnet32()
-            if self.use_gpu:
-                model.cuda()
-
-            self.models.append(model)
-
+        for i, net in enumerate(self.nets):
             # initialize optimizer and scheduler
-            optimizer = optim.SGD(model.parameters(), lr=self.lr, momentum=self.momentum,
+            optimizer = optim.SGD(net.parameters(), lr=self.lr, momentum=self.momentum,
                                   weight_decay=self.weight_decay, nesterov=self.nesterov)
 
             self.optimizers.append(optimizer)
@@ -107,8 +120,9 @@ class Trainer(object):
                 self.optimizers[i], step_size=60, gamma=self.gamma, last_epoch=-1)
             self.schedulers.append(scheduler)
 
-        print('[*] Number of parameters of one model: {:,}'.format(
-            sum([p.data.nelement() for p in self.models[0].parameters()])))
+            print('[*] Number of parameters of {} model: {:,}'.format(
+                self.model_names[i],
+                sum([p.data.nelement() for p in net.parameters()])))
 
     def train(self):
         """
@@ -128,9 +142,6 @@ class Trainer(object):
 
         for epoch in range(self.start_epoch, self.epochs):
 
-            for scheduler in self.schedulers:
-                scheduler.step(epoch)
-
             print(
                 '\nEpoch: {}/{} - LR: {:.6f}'.format(
                     epoch + 1, self.epochs, self.optimizers[0].param_groups[0]['lr'],)
@@ -142,7 +153,7 @@ class Trainer(object):
             # evaluate on validation set
             valid_losses, valid_accs = self.validate(epoch)
 
-            for i in range(self.model_num):
+            for i, net in enumerate(self.nets):
                 is_best = valid_accs[i].avg > self.best_valid_accs[i]
                 msg1 = "model_{:d}: train loss: {:.3f} - train acc: {:.3f} "
                 msg2 = "- val loss: {:.3f} - val acc: {:.3f}"
@@ -163,11 +174,13 @@ class Trainer(object):
                     valid_accs[i].avg, self.best_valid_accs[i])
                 self.save_checkpoint(i,
                                      {'epoch': epoch + 1,
-                                      'model_state': self.models[i].state_dict(),
+                                      'model_state': net.state_dict(),
                                       'optim_state': self.optimizers[i].state_dict(),
                                       'best_valid_acc': self.best_valid_accs[i],
                                       }, is_best
                                      )
+        for scheduler in self.schedulers:
+            scheduler.step(epoch)
 
     def train_one_epoch(self, epoch):
         """
@@ -182,24 +195,25 @@ class Trainer(object):
         losses = []
         accs = []
 
-        for i in range(self.model_num):
-            self.models[i].train()
+        for i, net in enumerate(self.nets):
+            net.train()
             losses.append(AverageMeter())
             accs.append(AverageMeter())
 
         tic = time.time()
         with tqdm(total=self.num_train) as pbar:
-            for i, batch in enumerate(self.train_loader):
+            for batch_i, batch in enumerate(self.train_loader):
                 images, true_labels, psuedo_labels = batch
                 if self.use_gpu:
-                    images, true_labels, psuedo_labels = images.cuda(
-                    ), true_labels.cuda(), psuedo_labels.cuda()
+                    images = images.cuda()
+                    true_labels = true_labels.cuda()
+                    psuedo_labels = psuedo_labels.cuda()
                 images, true_labels = Variable(images), Variable(true_labels)
 
                 # forward pass
                 outputs = []
-                for model in self.models:
-                    outputs.append(model(images))
+                for net in self.nets:
+                    outputs.append(net(images))
                 for i in range(self.model_num):
                     sl_signal = self.loss_ce(outputs[i], true_labels)
                     kd_signal = nn.KLDivLoss()(F.log_softmax(outputs[i] / self.temperature, dim=1),
@@ -214,7 +228,7 @@ class Trainer(object):
                     kd_part = (1 - self.lambda_b) * self.lambda_a * \
                         self.temperature * self.temperature * kd_signal
                     dml_part = self.lambda_b * \
-                        (dml_signal / (self.model_num - 1))
+                        (dml_signal / max(1, self.model_num - 1))
                     loss = sl_part + kd_part + dml_part
 
                     # measure accuracy and record loss
@@ -232,10 +246,12 @@ class Trainer(object):
                 toc = time.time()
                 batch_time.update(toc - tic)
 
+                log_turn = batch_i % self.model_num  # log a different model every batch
                 pbar.set_description(
                     (
-                        "{:.1f}s - model1_loss: {:.3f} - model1_acc: {:.3f}".format(
-                            (toc - tic), losses[0].avg, accs[0].avg
+                        "{:.1f}s - {} loss: {:.3f} - {} acc: {:.3f}".format(
+                            (toc -
+                             tic), self.model_names[log_turn], losses[log_turn].avg, self.model_names[log_turn], accs[log_turn].avg
                         )
                     )
                 )
@@ -259,10 +275,45 @@ class Trainer(object):
         """
         losses = []
         accs = []
-        for i in range(self.model_num):
-            self.models[i].eval()
+        for i, net in enumerate(self.nets):
+            net[i].eval()
             losses.append(AverageMeter())
             accs.append(AverageMeter())
+
+        for i, batch in enumerate(self.valid_loader):
+            images, true_labels, psuedo_labels = batch
+            if self.use_gpu:
+                images = images.cuda()
+                true_labels = true_labels.cuda()
+                psuedo_labels = psuedo_labels.cuda()
+            images, true_labels = Variable(images), Variable(true_labels)
+
+            # forward pass
+            outputs = []
+            for net in self.nets:
+                outputs.append(net(images))
+            for i in range(self.model_num):
+                sl_signal = self.loss_ce(outputs[i], true_labels)
+                kd_signal = nn.KLDivLoss()(F.log_softmax(outputs[i] / self.temperature, dim=1),
+                                           F.softmax(psuedo_labels[:, :, i] / self.temperature, dim=1))
+                dml_signal = 0
+                for j in range(self.model_num):
+                    if i != j:
+                        dml_signal += self.loss_kl(F.log_softmax(outputs[i], dim=1),
+                                                   F.softmax(Variable(outputs[j]), dim=1))
+
+                sl_part = (1 - self.lambda_a) * sl_signal
+                kd_part = (1 - self.lambda_b) * self.lambda_a * \
+                    self.temperature * self.temperature * kd_signal
+                dml_part = self.lambda_b * \
+                    (dml_signal / max(1, self.model_num - 1))
+                loss = sl_part + kd_part + dml_part
+
+                # measure accuracy and record loss
+                prec = accuracy(outputs[i].data,
+                                true_labels.data, topk=(1,))[0]
+                losses[i].update(loss.item(), images.size()[0])
+                accs[i].update(prec.item(), images.size()[0])
 
         for i, (images, labels) in enumerate(self.valid_loader):
             if self.use_gpu:
@@ -271,8 +322,8 @@ class Trainer(object):
 
             # forward pass
             outputs = []
-            for model in self.models:
-                outputs.append(model(images))
+            for net in enumerate(self.nets):
+                outputs.append(net(images))
             for i in range(self.model_num):
                 ce_loss = self.loss_ce(outputs[i], labels)
                 kl_loss = 0

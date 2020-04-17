@@ -1,4 +1,3 @@
-
 from collections import OrderedDict
 
 import torch
@@ -41,7 +40,6 @@ class LinearBottleneck(nn.Module):
         self.bn3 = nn.BatchNorm2d(outplanes)
         self.activation = activation(inplace=True)
         self.stride = stride
-        self.t = t
         self.inplanes = inplanes
         self.outplanes = outplanes
 
@@ -69,11 +67,9 @@ class MobileNet2(nn.Module):
     """MobileNet2 implementation.
     """
 
-    def __init__(self, scale=1.0, input_size=224, t=6, in_channels=3, num_classes=1000, activation=nn.ReLU6):
+    def __init__(self, scale=1.0, input_size=224, t=6, num_classes=1000, activation=nn.ReLU6):
         """
         MobileNet2 constructor.
-        :param in_channels: (int, optional): number of channels in the input tensor.
-                Default is 3 for RGB image inputs.
         :param input_size:
         :param num_classes: number of classes to predict. Default
                 is 1000 for ImageNet.
@@ -85,20 +81,22 @@ class MobileNet2(nn.Module):
         super(MobileNet2, self).__init__()
 
         self.scale = scale
-        self.t = t
         self.activation_type = activation
         self.activation = activation(inplace=True)
         self.num_classes = num_classes
+        self.t = t
 
         self.num_of_channels = [32, 16, 24, 32, 64, 96, 160, 320]
-        # assert (input_size % 32 == 0)
-
         self.c = [_make_divisible(ch * self.scale, 8)
                   for ch in self.num_of_channels]
         self.n = [1, 1, 2, 3, 4, 3, 3, 1]
-        self.s = [2, 1, 2, 2, 2, 1, 2, 1]
+        if input_size > 126:
+            self.s = [2, 1, 2, 2, 2, 1, 2, 1]
+        else:
+            self.s = [1, 1, 1, 2, 2, 1, 2, 1]
+
         self.conv1 = nn.Conv2d(
-            in_channels, self.c[0], kernel_size=3, bias=False, stride=self.s[0], padding=1)
+            3, self.c[0], kernel_size=3, bias=False, stride=self.s[0], padding=1)
         self.bn1 = nn.BatchNorm2d(self.c[0])
         self.bottlenecks = self._make_bottlenecks()
 
@@ -108,7 +106,10 @@ class MobileNet2(nn.Module):
         self.conv_last = nn.Conv2d(
             self.c[-1], self.last_conv_out_ch, kernel_size=1, bias=False)
         self.bn_last = nn.BatchNorm2d(self.last_conv_out_ch)
-        self.avgpool = nn.AdaptiveAvgPool2d(1)
+        if input_size > 126:
+            self.avgpool = nn.AvgPool2d(kernel_size=7)
+        else:
+            self.avgpool = nn.AvgPool2d(kernel_size=4)
         # confirmed by paper authors
         self.dropout = nn.Dropout(p=0.2, inplace=True)
         self.fc = nn.Linear(self.last_conv_out_ch, self.num_classes)
@@ -185,25 +186,35 @@ class MobileNet2(nn.Module):
         return F.log_softmax(x, dim=1)  # TODO not needed(?)
 
 
+def create_model(size, input_size, num_classes):
+    return MobileNet2(scale=float(f'0.{size}'),
+                      input_size=input_size,
+                      num_classes=num_classes)
+
+
 if __name__ == "__main__":
     """Testing
     """
-    # model1 = MobileNet2()
-    # print(model1)
-    # model2 = MobileNet2(scale=0.35)
-    # print(model2)
-    # model3 = MobileNet2(in_channels=2, num_classes=10)
-    # print(model3)
-    # x = torch.randn(1, 2, 224, 224)
-    # print(model3(x))
-    # model4_size = 32 * 10
-    # model4 = MobileNet2(input_size=model4_size, num_classes=10)
-    # print(model4)
-    # x2 = torch.randn(1, 3, model4_size, model4_size)
-    # print(model4(x2))
-    # model5 = MobileNet2(input_size=196, num_classes=10)
-    # x3 = torch.randn(1, 3, 196, 196)
-    # print(model5(x3))  # fail
+    model1 = MobileNet2()
+    print(model1)
+    model2 = MobileNet2(scale=0.35)
+    print(model2)
+    model3 = MobileNet2(num_classes=10)
+    print(model3)
+    x = torch.randn(1, 3, 224, 224)
+    print(model3(x))
+    model4_size = 32 * 10
+    model4 = MobileNet2(input_size=model4_size, num_classes=10)
+    print(model4)
+    x2 = torch.randn(1, 3, model4_size, model4_size)
+    print(model4(x2))
+    model5 = MobileNet2(input_size=196, num_classes=10)
+    x3 = torch.randn(1, 3, 196, 196)
+    print(model5(x3))  # fail
+    model6 = MobileNet2(input_size=36, num_classes=10)
+    x3 = torch.randn(1, 3, 36, 36)
+    print(model6)
+    print(model6(x3))
     model2 = MobileNet2(scale=0.1)
     model2 = MobileNet2(scale=0.25)
     model2 = MobileNet2(scale=0.35)
