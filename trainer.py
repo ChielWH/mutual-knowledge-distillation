@@ -11,9 +11,13 @@ import time
 import shutil
 import warnings
 
-from tqdm import tqdm
-from utils import accuracy, AverageMeter, model_init, infer_input_size
+from utils import accuracy, AverageMeter, model_init, infer_input_size, isnotebook, print_epoch_stats
 from tensorboard_logger import configure, log_value
+
+if isnotebook():
+    from tqdm.notebook import tqdm
+else:
+    from tqdm import tqdm
 
 # get rid of the torch.nn.KLDivLoss(reduction='batchmean') warning
 warnings.filterwarnings(
@@ -79,7 +83,6 @@ class Trainer(object):
         self.train_patience = config.train_patience
         self.use_tensorboard = config.use_tensorboard
         self.resume = config.resume
-        self.print_freq = config.print_freq
         self.model_name = config.save_name
 
         # model specific params
@@ -153,34 +156,27 @@ class Trainer(object):
             # evaluate on validation set
             valid_losses, valid_accs = self.validate(epoch)
 
-            for i, net in enumerate(self.nets):
-                is_best = valid_accs[i].avg > self.best_valid_accs[i]
-                msg1 = "model_{:d}: train loss: {:.3f} - train acc: {:.3f} "
-                msg2 = "- val loss: {:.3f} - val acc: {:.3f}"
-                if is_best:
-                    # self.counter = 0
-                    msg2 += " [*]"
-                msg = msg1 + msg2
-                print(msg.format(
-                    i + 1, train_losses[i].avg, train_accs[i].avg, valid_losses[i].avg, valid_accs[i].avg))
+            print_epoch_stats(self.model_names, train_losses,
+                              train_accs, valid_losses, valid_accs)
 
             # check for improvement
             # if not is_best:
-                # self.counter += 1
+            # self.counter += 1
             # if self.counter > self.train_patience:
-                # print("[!] No improvement in a while, stopping training.")
-                # return
-                self.best_valid_accs[i] = max(
-                    valid_accs[i].avg, self.best_valid_accs[i])
-                self.save_checkpoint(i,
-                                     {'epoch': epoch + 1,
-                                      'model_state': net.state_dict(),
-                                      'optim_state': self.optimizers[i].state_dict(),
-                                      'best_valid_acc': self.best_valid_accs[i],
-                                      }, is_best
-                                     )
+            # print("[!] No improvement in a while, stopping training.")
+            # return
+            # self.best_valid_accs[i] = max(
+            #     valid_accs[i].avg, self.best_valid_accs[i])
+            # self.save_checkpoint(i,
+            #                      {'epoch': epoch + 1,
+            #                       'model_state': net.state_dict(),
+            #                       'optim_state': self.optimizers[i].state_dict(),
+            #                       'best_valid_acc': self.best_valid_accs[i],
+            #                       }, is_best
+            #                      )
         for scheduler in self.schedulers:
-            scheduler.step(epoch)
+            scheduler.step()
+            # scheduler.step(epoch)
 
     def train_one_epoch(self, epoch):
         """
@@ -246,15 +242,15 @@ class Trainer(object):
                 toc = time.time()
                 batch_time.update(toc - tic)
 
-                log_turn = batch_i % self.model_num  # log a different model every batch
                 pbar.set_description(
                     (
-                        "{:.1f}s - {} loss: {:.3f} - {} acc: {:.3f}".format(
+                        "{:.1f}s - {} loss: {:.3f}, acc: {:.3f}".format(
                             (toc -
-                             tic), self.model_names[log_turn], losses[log_turn].avg, self.model_names[log_turn], accs[log_turn].avg
+                             tic), self.model_names[0], losses[0].avg, accs[0].avg
                         )
                     )
                 )
+
                 self.batch_size = images.shape[0]
                 pbar.update(self.batch_size)
 
@@ -276,7 +272,7 @@ class Trainer(object):
         losses = []
         accs = []
         for i, net in enumerate(self.nets):
-            net[i].eval()
+            net.eval()
             losses.append(AverageMeter())
             accs.append(AverageMeter())
 
@@ -315,28 +311,28 @@ class Trainer(object):
                 losses[i].update(loss.item(), images.size()[0])
                 accs[i].update(prec.item(), images.size()[0])
 
-        for i, (images, labels) in enumerate(self.valid_loader):
-            if self.use_gpu:
-                images, labels = images.cuda(), labels.cuda()
-            images, labels = Variable(images), Variable(labels)
+        # for i, (images, labels) in enumerate(self.valid_loader):
+        #     if self.use_gpu:
+        #         images, labels = images.cuda(), labels.cuda()
+        #     images, labels = Variable(images), Variable(labels)
 
-            # forward pass
-            outputs = []
-            for net in enumerate(self.nets):
-                outputs.append(net(images))
-            for i in range(self.model_num):
-                ce_loss = self.loss_ce(outputs[i], labels)
-                kl_loss = 0
-                for j in range(self.model_num):
-                    if i != j:
-                        kl_loss += self.loss_kl(F.log_softmax(outputs[i], dim=1),
-                                                F.softmax(Variable(outputs[j]), dim=1))
-                loss = ce_loss + kl_loss / (self.model_num - 1)
+        #     # forward pass
+        #     outputs = []
+        #     for net in enumerate(self.nets):
+        #         outputs.append(net(images))
+        #     for i in range(self.model_num):
+        #         ce_loss = self.loss_ce(outputs[i], labels)
+        #         kl_loss = 0
+        #         for j in range(self.model_num):
+        #             if i != j:
+        #                 kl_loss += self.loss_kl(F.log_softmax(outputs[i], dim=1),
+        #                                         F.softmax(Variable(outputs[j]), dim=1))
+        #         loss = ce_loss + kl_loss / (self.model_num - 1)
 
-                # measure accuracy and record loss
-                prec = accuracy(outputs[i].data, labels.data, topk=(1,))[0]
-                losses[i].update(loss.item(), images.size()[0])
-                accs[i].update(prec.item(), images.size()[0])
+        #         # measure accuracy and record loss
+        #         prec = accuracy(outputs[i].data, labels.data, topk=(1,))[0]
+        #         losses[i].update(loss.item(), images.size()[0])
+        #         accs[i].update(prec.item(), images.size()[0])
 
         # log to tensorboard for every epoch
         if self.use_tensorboard:
