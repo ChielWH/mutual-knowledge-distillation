@@ -129,6 +129,34 @@ def save_config(config):
         json.dump(config.__dict__, fp, indent=4, sort_keys=True)
 
 
+def print_epoch_stats(model_names, train_losses, train_accs, valid_losses, valid_accs):
+    print("Epoch statistics:")
+    print("model     |train loss| train acc|  val loss|   val acc|")
+    print("=" * 55)
+    model_stats = "{model_name:10}|{train_loss:10.3f}|{train_acc:10.3f}|{valid_loss:10.3f}|{valid_acc:10.3f}|"
+    for i, model_name in enumerate(model_names):
+        print(model_stats.format(
+            model_name=model_name,
+            train_loss=train_losses[i].avg,
+            train_acc=train_accs[i].avg,
+            valid_loss=valid_losses[i].avg,
+            valid_acc=valid_accs[i].avg)
+        )
+
+
+def isnotebook():
+    try:
+        shell = get_ipython().__class__.__name__
+        if shell in ['ZMQInteractiveShell', 'Shell']:
+            return True   # Jupyter notebook, Colab or qtconsole
+        elif shell == 'TerminalInteractiveShell':
+            return False  # Terminal running IPython
+        else:
+            return False  # Other type (?)
+    except NameError:
+        return False
+
+
 def correct_out_features(model, out_features):
     import torch
     for idx, module in reversed(list(enumerate(model.modules()))):
