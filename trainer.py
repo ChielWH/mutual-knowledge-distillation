@@ -12,7 +12,7 @@ import shutil
 import warnings
 
 from utils import accuracy, AverageMeter, model_init, infer_input_size, isnotebook, print_epoch_stats
-from tensorboard_logger import configure, log_value
+import wandb
 
 if isnotebook():
     from tqdm.notebook import tqdm
@@ -81,7 +81,7 @@ class Trainer(object):
         self.counter = 0
         self.lr_patience = config.lr_patience
         self.train_patience = config.train_patience
-        self.use_tensorboard = config.use_tensorboard
+        self.use_wandb = config.use_wandb
         self.resume = config.resume
         self.model_name = config.save_name
 
@@ -103,13 +103,10 @@ class Trainer(object):
         self.loss_kl = nn.KLDivLoss(reduction='batchmean')
         self.loss_ce = nn.CrossEntropyLoss()
 
-        # configure tensorboard logging
-        if self.use_tensorboard:
-            tensorboard_dir = self.logs_dir + self.model_name
-            print('[*] Saving tensorboard logs to {}'.format(tensorboard_dir))
-            if not os.path.exists(tensorboard_dir):
-                os.makedirs(tensorboard_dir)
-            configure(tensorboard_dir)
+        # configure Weights and Biases logging
+        if self.use_wandb:
+            wandb.init(name='test experiment',
+                       project='mutual-knowledge-distillation')
 
         for i, net in enumerate(self.nets):
             # initialize optimizer and scheduler
@@ -159,6 +156,15 @@ class Trainer(object):
             print_epoch_stats(self.model_names, train_losses,
                               train_accs, valid_losses, valid_accs)
 
+            if self.use_wandb:
+                log_dict = {}
+                for i, model_name in enumerate(self.model_names):
+                    log_dict[f'{model_name} train loss'] = train_losses[i].avg
+                    log_dict[f'{model_name} train acc'] = train_accs[i].avg
+                    log_dict[f'{model_name} val loss'] = valid_losses[i].avg
+                    log_dict[f'{model_name} val acc'] = valid_accs[i].avg
+                wandb.log(log_dict)
+
             # check for improvement
             # if not is_best:
             # self.counter += 1
@@ -176,7 +182,6 @@ class Trainer(object):
             #                      )
         for scheduler in self.schedulers:
             scheduler.step()
-            # scheduler.step(epoch)
 
     def train_one_epoch(self, epoch):
         """
@@ -191,7 +196,7 @@ class Trainer(object):
         losses = []
         accs = []
 
-        for i, net in enumerate(self.nets):
+        for net in self.nets:
             net.train()
             losses.append(AverageMeter())
             accs.append(AverageMeter())
@@ -254,15 +259,6 @@ class Trainer(object):
                 self.batch_size = images.shape[0]
                 pbar.update(self.batch_size)
 
-                # log to tensorboard
-                if self.use_tensorboard:
-                    iteration = epoch * len(self.train_loader) + i
-                    for i in range(self.model_num):
-                        log_value('train_loss_%d' %
-                                  (i + 1), losses[i].avg, iteration)
-                        log_value('train_acc_%d' %
-                                  (i + 1), accs[i].avg, iteration)
-
             return losses, accs
 
     def validate(self, epoch):
@@ -310,35 +306,6 @@ class Trainer(object):
                                 true_labels.data, topk=(1,))[0]
                 losses[i].update(loss.item(), images.size()[0])
                 accs[i].update(prec.item(), images.size()[0])
-
-        # for i, (images, labels) in enumerate(self.valid_loader):
-        #     if self.use_gpu:
-        #         images, labels = images.cuda(), labels.cuda()
-        #     images, labels = Variable(images), Variable(labels)
-
-        #     # forward pass
-        #     outputs = []
-        #     for net in enumerate(self.nets):
-        #         outputs.append(net(images))
-        #     for i in range(self.model_num):
-        #         ce_loss = self.loss_ce(outputs[i], labels)
-        #         kl_loss = 0
-        #         for j in range(self.model_num):
-        #             if i != j:
-        #                 kl_loss += self.loss_kl(F.log_softmax(outputs[i], dim=1),
-        #                                         F.softmax(Variable(outputs[j]), dim=1))
-        #         loss = ce_loss + kl_loss / (self.model_num - 1)
-
-        #         # measure accuracy and record loss
-        #         prec = accuracy(outputs[i].data, labels.data, topk=(1,))[0]
-        #         losses[i].update(loss.item(), images.size()[0])
-        #         accs[i].update(prec.item(), images.size()[0])
-
-        # log to tensorboard for every epoch
-        if self.use_tensorboard:
-            for i in range(self.model_num):
-                log_value('valid_loss_%d' % (i + 1), losses[i].avg, epoch + 1)
-                log_value('valid_acc_%d' % (i + 1), accs[i].avg, epoch + 1)
 
         return losses, accs
 

@@ -50,7 +50,7 @@ train_arg.add_argument('--gamma', type=float, default=0.1,
                        help='value of learning rate decay')
 train_arg.add_argument('--lambda_a', type=float, default=0.5,
                        help='balance between sl signal and the additional signals')
-train_arg.add_argument('--lambda_b', type=float, default=0.5,
+train_arg.add_argument('--lambda_b', type=float, default=1.,
                        help='balance between kd signal and the dml signals')
 train_arg.add_argument('--temperature', type=float, default=3,
                        help='softmax temperature')
@@ -69,16 +69,12 @@ misc_arg.add_argument('--ckpt_dir', type=str, default='./ckpt',
                       help='Directory in which to save model checkpoints')
 misc_arg.add_argument('--logs_dir', type=str, default='./logs/',
                       help='Directory in which Tensorboard logs wil be stored')
-misc_arg.add_argument('--use_tensorboard', type=str2bool, default=False,
-                      help='Whether to use tensorboard for visualization')
+misc_arg.add_argument('--use_wand', type=str2bool, default=False,
+                      help='Whether to use Weights and Biases for visualization')
 misc_arg.add_argument('--resume', type=str2bool, default=False,
                       help='Whether to resume training from checkpoint')
-misc_arg.add_argument('--print_freq', type=int, default=10,
-                      help='How frequently to print training details')
 misc_arg.add_argument('--save_name', type=str, default='model',
                       help='Name of the model to save as')
-misc_arg.add_argument('--model_num', type=int, default=2,
-                      help='Number of models to train for DML')
 misc_arg.add_argument('--model_names', nargs='+', default=['RN14', 'MN20', 'EFB0'],
                       help='The abbreviation of the model name with size indicator',
                       choices=['EFB0', 'EFB1', 'EFB2', 'EFB3', 'EFB4', 'EFB5', 'EFB6', 'EFB7',
