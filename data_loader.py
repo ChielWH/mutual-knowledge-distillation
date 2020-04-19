@@ -1,10 +1,16 @@
 import inspect
-from tqdm import tqdm
 import numpy as np
 
 import torch
 from torchvision import datasets
 from torchvision import transforms
+
+from utils import isnotebook
+
+if isnotebook():
+    from tqdm.notebook import tqdm
+else:
+    from tqdm import tqdm
 
 
 class PsuedoLabelledDataset(torch.utils.data.Dataset):
@@ -166,9 +172,9 @@ def get_test_loader(data_dir,
     """
     # define transforms
     trans = transforms.Compose([
-        transforms.ToTensor(),  # 将numpy数据类型转化为Tensor
+        transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [
-                             0.229, 0.224, 0.225])  # 归一化
+                             0.229, 0.224, 0.225])
     ])
 
     # load dataset
