@@ -49,6 +49,7 @@ for path in paths:
         dest = test_folder + str(folder) + '/images/' + str(file)
     shutil.move(path, dest)
 
+os.rmdir('tiny-imagenet-200.zip')
 os.rmdir('./tiny-imagenet-200/val/images')
 
 # removing the .txt files containing the bounding boxes
@@ -57,32 +58,30 @@ for root, dirnames, filenames in os.walk('tiny-imagenet-200'):
         os.remove(os.path.join(root, filename))
 
 # resizing the images from 200*200 to 224*224
-shutil.copytree('tiny-imagenet-200', 'tiny-imagenet-224')
-all_images = glob.glob('tiny-imagenet-224/*/*/*/*')
+# shutil.copytree('tiny-imagenet-200', 'tiny-imagenet-224')
+# all_images = glob.glob('tiny-imagenet-224/*/*/*/*')
 
-if sys.stdout.isatty():  # if in terminal
-    with tqdm(total=len(all_images)) as pbar:
-        pbar.set_description(
-            f'resizing the images from 200 by 200 to 224 by 224')
-        for image_path in all_images:
-            img = cv2.imread(image_path)
-            img = cv2.resize(img, (224, 224), interpolation=cv2.INTER_CUBIC)
-            cv2.imwrite(image_path, img)
-            pbar.update(1)
+# if sys.stdout.isatty():  # if in terminal
+#     with tqdm(total=len(all_images)) as pbar:
+#         pbar.set_description(
+#             f'resizing the images from 200 by 200 to 224 by 224')
+#         for image_path in all_images:
+#             img = cv2.imread(image_path)
+#             img = cv2.resize(img, (224, 224), interpolation=cv2.INTER_CUBIC)
+#             cv2.imwrite(image_path, img)
+#             pbar.update(1)
 
-else:
-    print('resizing the images from 200 by 200 to 224 by 224')
-    for idx, image_path in enumerate(all_images, 1):
-        img = cv2.imread(image_path)
-        img = cv2.resize(img, (224, 224), interpolation=cv2.INTER_CUBIC)
-        cv2.imwrite(image_path, img)
-        if idx % (len(all_images) // 10) == 0:
-            print(f'at {int(idx / len(all_images) * 100)}%')
-    print('resizing done')
+# else:
+#     print('resizing the images from 200 by 200 to 224 by 224')
+#     for idx, image_path in enumerate(all_images, 1):
+#         img = cv2.imread(image_path)
+#         img = cv2.resize(img, (224, 224), interpolation=cv2.INTER_CUBIC)
+#         cv2.imwrite(image_path, img)
+#         if idx % (len(all_images) // 10) == 0:
+#             print(f'at {int(idx / len(all_images) * 100)}%')
+#     print('resizing done')
 
-for image_path in all_images:
-    img = cv2.imread(image_path)
-    img = cv2.resize(img, (224, 224), interpolation=cv2.INTER_CUBIC)
-    cv2.imwrite(image_path, img)
-
-os.rmdir('tiny-imagenet-200.zip')
+# for image_path in all_images:
+#     img = cv2.imread(image_path)
+#     img = cv2.resize(img, (224, 224), interpolation=cv2.INTER_CUBIC)
+#     cv2.imwrite(image_path, img)
