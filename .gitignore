@@ -1,6 +1,7 @@
 data/*
 logs/*
 ckpt/*
+*wandb/
 !*/README.md
 *.ipynb*
 *.pyc
