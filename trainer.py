@@ -1,9 +1,7 @@
 import torch
-import torchvision
 import torch.nn as nn
 from torch.autograd import Variable
 import torch.optim as optim
-from torch.optim.lr_scheduler import ReduceLROnPlateau
 import torch.nn.functional as F
 
 import os
@@ -11,8 +9,18 @@ import time
 import shutil
 import warnings
 
-from utils import accuracy, RunningAverageMeter, MovingAverageMeter, model_init, infer_input_size, isnotebook, print_epoch_stats
 import wandb
+
+from utils import (
+    accuracy,
+    RunningAverageMeter,
+    MovingAverageMeter,
+    model_init,
+    infer_input_size,
+    isnotebook,
+    print_epoch_stats
+)
+
 # from tensorboard_logger import configure, log_value
 
 if isnotebook():
@@ -22,7 +30,9 @@ else:
 
 # get rid of the torch.nn.KLDivLoss(reduction='batchmean') warning
 warnings.filterwarnings(
-    "ignore", message="reduction: 'mean' divides the total loss by both the batch size and the support size.")
+    "ignore",
+    message="reduction: 'mean' divides the total loss by both the batch size and the support size."
+)
 
 
 class Trainer(object):
@@ -45,7 +55,7 @@ class Trainer(object):
         """
         self.config = config
 
-        # data params
+        # DATA PARAMS
         if config.is_train:
             self.train_loader = data_loader[0]
             self.valid_loader = data_loader[1]
@@ -59,7 +69,7 @@ class Trainer(object):
         self.input_size = infer_input_size(batch)
         self.num_classes = config.num_classes
 
-        # training params
+        # TRAINING PARAMS
         self.epochs = config.epochs
         self.start_epoch = 0
         self.momentum = config.momentum
@@ -71,7 +81,7 @@ class Trainer(object):
         self.lambda_b = config.lambda_b
         self.temperature = config.temperature
 
-        # misc params
+        # MISCELLANEOUS PARAMS
         if not config.disable_cuda and torch.cuda.is_available():
             self.use_gpu = True
         else:
@@ -86,7 +96,7 @@ class Trainer(object):
         self.resume = config.resume
         self.model_name = config.save_name
 
-        # model specific params
+        # MODEL SPECIFIC PARAMS
         self.model_names = config.model_names
         self.nets = [model_init(model_name,
                                 self.use_gpu,
@@ -95,31 +105,50 @@ class Trainer(object):
                      for model_name in self.model_names]
         self.model_num = len(self.model_names)
 
-        # list and func initializations
+        # LIST AND FUNC INITIALIZATIONS
         self.optimizers = []
         self.schedulers = []
-
         self.best_valid_accs = [0.] * self.model_num
-
         self.loss_kl = nn.KLDivLoss(reduction='batchmean')
         self.loss_ce = nn.CrossEntropyLoss()
 
-        # configure tensorboard logging
+        # LEARNING SIGNAL CONDITIONNS
+        # if lambda b = 1. (which it always should be for the first level)
+        # the kd part is disabled and should therefore not be logged
+        self.kd_condition = bool(1 - self.lambda_b)
+
+        # deep mutual learning can only be done on a set of models
+        # the dml is therefore disabled for model_num <= 1 (for a kd experiment for instance)
+        self.dml_condition = self.model_num >= 2
+
+        # if both previous conditions are False, the sl_signal is equal to the overall loss
+        # therefore we do not need the sl_signal explicitely
+        self.sl_condition = any([self.dml_condition, self.kd_condition])
+
+        # CONFIGURE TENSORBOARD LOGGING
         if self.use_wandb:
             wandb.init(name='test experiment',
                        project='mutual-knowledge-distillation')
 
-        print(self.gamma)
         for i, net in enumerate(self.nets):
             # initialize optimizer and scheduler
-            optimizer = optim.SGD(net.parameters(), lr=self.lr, momentum=self.momentum,
-                                  weight_decay=self.weight_decay, nesterov=self.nesterov)
+            optimizer = optim.SGD(
+                net.parameters(),
+                lr=self.lr,
+                momentum=self.momentum,
+                weight_decay=self.weight_decay,
+                nesterov=self.nesterov
+            )
 
             self.optimizers.append(optimizer)
 
             # set learning rate decay
             scheduler = optim.lr_scheduler.StepLR(
-                self.optimizers[i], step_size=60, gamma=self.gamma, last_epoch=-1)
+                self.optimizers[i],
+                step_size=60,
+                gamma=self.gamma,
+                last_epoch=-1
+            )
 
             self.schedulers.append(scheduler)
 
@@ -147,42 +176,41 @@ class Trainer(object):
 
             print(
                 '\nEpoch: {}/{} - LR: {:.6f}'.format(
-                    epoch + 1, self.epochs, self.optimizers[0].param_groups[0]['lr'],)
+                    epoch + 1,
+                    self.epochs,
+                    self.optimizers[0].param_groups[0]['lr'])
             )
 
             # train for 1 epoch
-            train_losses, train_accs_at_1, train_accs_at_5 = self.train_one_epoch(
+            train_metrics = self.train_one_epoch(
                 epoch)
 
             # evaluate on validation set
-            valid_losses, valid_accs_at_1, valid_accs_at_5 = self.validate(
+            valid_metrics = self.validate(
                 epoch)
 
             print_epoch_stats(
                 model_names=self.model_names,
-                train_losses=train_losses,
-                train_accs=train_accs_at_1,
-                valid_losses=valid_losses,
-                valid_accs=valid_accs_at_1
+                train_losses=train_metrics['losses'],
+                train_accs=train_metrics['accs @ 1'],
+                valid_losses=valid_metrics['losses'],
+                valid_accs=valid_metrics['accs @ 1']
             )
 
             if self.use_wandb:
                 log_dict = {}
                 for i, model_name in enumerate(self.model_names):
-                    log_dict[f'{model_name} train loss'] = train_losses[i].avg
-                    log_dict[f'{model_name} train acc @ 1'] = train_accs_at_1[i].avg
-                    log_dict[f'{model_name} train acc @ 5'] = train_accs_at_5[i].avg
-                    log_dict[f'{model_name} valid loss'] = valid_losses[i].avg
-                    log_dict[f'{model_name} valid acc @ 1'] = valid_accs_at_1[i].avg
-                    log_dict[f'{model_name} valid acc @ 5'] = valid_accs_at_5[i].avg
+                    for metric_dict in [train_metrics, valid_metrics]:
+                        for metric_name, avg_meter in metric_dict.items():
+                            log_dict[f'{model_name} {metric_name}'] = avg_meter[i].avg
                 wandb.log(log_dict)
 
             # save epoch state
             for i, net in enumerate(self.nets):
                 is_best = False
-                if self.best_valid_accs[i] > valid_accs_at_1[i].avg:
+                if self.best_valid_accs[i] > valid_metrics['accs @ 1'][i].avg:
                     is_best = True
-                    self.best_valid_accs[i] = valid_accs_at_1[i].avg
+                    self.best_valid_accs[i] = valid_metrics['accs @ 1'][i].avg
 
                 self.save_checkpoint(self.model_names[i],
                                      {'epoch': epoch + 1,
@@ -204,16 +232,27 @@ class Trainer(object):
 
         This is used by train() and should not be called manually.
         """
-        batch_time = RunningAverageMeter()
         losses = []
         accs_at_1 = []
         accs_at_5 = []
+        if self.sl_condition:
+            sl_signals = []
+        if self.kd_condition:
+            kd_signals = []
+        if self.dml_condition:
+            dml_signals = []
 
         for net in self.nets:
             net.train()
             losses.append(MovingAverageMeter())
             accs_at_1.append(MovingAverageMeter())
             accs_at_5.append(MovingAverageMeter())
+            if self.sl_condition:
+                sl_signals.append(MovingAverageMeter())
+            if self.kd_condition:
+                kd_signals.append(MovingAverageMeter())
+            if self.dml_condition:
+                dml_signals.append(MovingAverageMeter())
 
         tic = time.time()
         with tqdm(total=self.num_train) as pbar:
@@ -230,30 +269,65 @@ class Trainer(object):
                 for net in self.nets:
                     outputs.append(net(images))
                 for i in range(self.model_num):
+                    # supervised learning signal
                     sl_signal = self.loss_ce(outputs[i], true_labels)
-                    kd_signal = nn.KLDivLoss()(F.log_softmax(outputs[i] / self.temperature, dim=1),
-                                               F.softmax(psuedo_labels[:, :, i] / self.temperature, dim=1))
-                    dml_signal = 0
-                    for j in range(self.model_num):
-                        if i != j:
-                            dml_signal += self.loss_kl(F.log_softmax(outputs[i], dim=1),
-                                                       F.softmax(Variable(outputs[j]), dim=1))
-
                     sl_part = (1 - self.lambda_a) * sl_signal
-                    kd_part = (1 - self.lambda_b) * self.lambda_a * \
-                        self.temperature * self.temperature * kd_signal
-                    dml_part = self.lambda_b * \
-                        (dml_signal / max(1, self.model_num - 1))
-                    loss = sl_part + kd_part + dml_part
+
+                    # initialize the overall loss
+                    loss = sl_part
+
+                    # knowledge distillation signal
+                    if self.kd_condition:
+                        kd_signal = nn.KLDivLoss()(
+                            F.log_softmax(
+                                outputs[i] / self.temperature,
+                                dim=1),
+                            F.softmax(
+                                psuedo_labels[:, :, i] / self.temperature,
+                                dim=1)
+                        )
+                        kd_part = (1 - self.lambda_b) * self.lambda_a * \
+                            self.temperature * self.temperature * kd_signal
+
+                        # add kd signal to the overall loss
+                        loss += kd_part
+
+                    # deep mutual learning signal
+                    if self.dml_condition:
+                        dml_signal = 0
+                        for j in range(self.model_num):
+                            if i != j:
+                                dml_signal += self.loss_kl(
+                                    F.log_softmax(outputs[i], dim=1),
+                                    F.softmax(Variable(outputs[j]), dim=1)
+                                )
+                        dml_part = self.lambda_b * \
+                            (dml_signal / max(1, self.model_num - 1))
+
+                        # add dml signal to the overall loss
+                        loss += dml_part
 
                     # measure accuracy and record loss
                     prec_at_1 = accuracy(outputs[i].data,
                                          true_labels.data, topk=(1,))[0]
                     prec_at_5 = accuracy(outputs[i].data,
                                          true_labels.data, topk=(5,))[0]
-                    losses[i].update(loss.item())
+
                     accs_at_1[i].update(prec_at_1.item())
                     accs_at_5[i].update(prec_at_5.item())
+                    losses[i].update(loss.item())
+
+                    # log the seperate signals if useful
+                    if self.sl_condition:
+                        sl_signals[i].update(
+                            sl_part.item() / (1 - self.lambda_a))
+
+                    if self.kd_condition:
+                        kd_signals[i].update(
+                            kd_part.item() / ((1 - self.lambda_b) * self.lambda_a))
+
+                    if self.dml_condition:
+                        dml_signals[i].update(dml_part.item() / self.lambda_b)
 
                     # compute gradients and update SGD
                     self.optimizers[i].zero_grad()
@@ -262,13 +336,14 @@ class Trainer(object):
 
                 # measure elapsed time
                 toc = time.time()
-                batch_time.update(toc - tic)
 
                 pbar.set_description(
                     (
                         "{:.1f}s - {} loss: {:.3f}, acc: {:.3f}".format(
-                            (toc -
-                             tic), self.model_names[0], losses[0].avg, accs_at_1[0].avg
+                            (toc - tic),
+                            self.model_names[0],
+                            losses[0].avg,
+                            accs_at_1[0].avg
                         )
                     )
                 )
@@ -276,7 +351,21 @@ class Trainer(object):
                 self.batch_size = images.shape[0]
                 pbar.update(self.batch_size)
 
-            return losses, accs_at_1, accs_at_5
+            metrics = {
+                'train loss': losses,
+                'train acc @ 1': accs_at_1,
+                'train acc @ 5': accs_at_5
+            }
+            if self.sl_condition:
+                metrics['train sl signal'] = sl_signals
+
+            if self.kd_condition:
+                metrics['train kd signal'] = kd_signals
+
+            if self.dml_condition:
+                metrics['train dml signal'] = dml_signals
+
+            return metrics
 
     def validate(self, epoch):
         """
@@ -285,11 +374,24 @@ class Trainer(object):
         losses = []
         accs_at_1 = []
         accs_at_5 = []
-        for i, net in enumerate(self.nets):
-            net.eval()
-            losses.append(RunningAverageMeter())
+        if self.sl_condition:
+            sl_signals = []
+        if self.kd_condition:
+            kd_signals = []
+        if self.dml_condition:
+            dml_signals = []
+
+        for net in self.nets:
+            net.train()
+            losses.append(MovingAverageMeter())
             accs_at_1.append(MovingAverageMeter())
             accs_at_5.append(MovingAverageMeter())
+            if self.sl_condition:
+                sl_signals.append(MovingAverageMeter())
+            if self.kd_condition:
+                kd_signals.append(MovingAverageMeter())
+            if self.dml_condition:
+                dml_signals.append(MovingAverageMeter())
 
         for i, batch in enumerate(self.valid_loader):
             images, true_labels, psuedo_labels = batch
@@ -304,32 +406,77 @@ class Trainer(object):
             for net in self.nets:
                 outputs.append(net(images))
             for i in range(self.model_num):
+                # supervised learning signal
                 sl_signal = self.loss_ce(outputs[i], true_labels)
-                kd_signal = nn.KLDivLoss()(F.log_softmax(outputs[i] / self.temperature, dim=1),
-                                           F.softmax(psuedo_labels[:, :, i] / self.temperature, dim=1))
-                dml_signal = 0
-                for j in range(self.model_num):
-                    if i != j:
-                        dml_signal += self.loss_kl(F.log_softmax(outputs[i], dim=1),
-                                                   F.softmax(Variable(outputs[j]), dim=1))
-
                 sl_part = (1 - self.lambda_a) * sl_signal
-                kd_part = (1 - self.lambda_b) * self.lambda_a * \
-                    self.temperature * self.temperature * kd_signal
-                dml_part = self.lambda_b * \
-                    (dml_signal / max(1, self.model_num - 1))
-                loss = sl_part + kd_part + dml_part
+                # initialize the overall loss
+                loss = sl_part
+
+                # knowledge distillation signal
+                if self.kd_condition:
+                    kd_signal = nn.KLDivLoss()(
+                        F.log_softmax(outputs[i] / self.temperature, dim=1),
+                        F.softmax(
+                            psuedo_labels[:, :, i] / self.temperature, dim=1)
+                    )
+                    kd_part = (1 - self.lambda_b) * self.lambda_a * \
+                        self.temperature * self.temperature * kd_signal
+
+                    # add dml signal to the overall loss
+                    loss += kd_part
+
+                # deep mutual learning signal
+                if self.dml_condition:
+                    dml_signal = 0
+                    for j in range(self.model_num):
+                        if i != j:
+                            dml_signal += self.loss_kl(
+                                F.log_softmax(outputs[i], dim=1),
+                                F.softmax(Variable(outputs[j]), dim=1)
+                            )
+                    dml_part = self.lambda_b * \
+                        (dml_signal / max(1, self.model_num - 1))
+
+                    # add dml signal to the overall loss
+                    loss += dml_part
 
                 # measure accuracy and record loss
                 prec_at_1 = accuracy(outputs[i].data,
                                      true_labels.data, topk=(1,))[0]
                 prec_at_5 = accuracy(outputs[i].data,
                                      true_labels.data, topk=(5,))[0]
-                losses[i].update(loss.item())
+
                 accs_at_1[i].update(prec_at_1.item())
                 accs_at_5[i].update(prec_at_5.item())
+                losses[i].update(loss.item())
 
-        return losses, accs_at_1, accs_at_5
+                # log the seperate signals if useful
+                if self.sl_condition:
+                    sl_signals[i].update(
+                        sl_part.item() / (1 - self.lambda_a))
+
+                if self.kd_condition:
+                    kd_signals[i].update(
+                        kd_part.item() / ((1 - self.lambda_b) * self.lambda_a))
+
+                if self.dml_condition:
+                    dml_signals[i].update(dml_part.item() / self.lambda_b)
+
+            metrics = {
+                'valid loss': losses,
+                'valid acc @ 1': accs_at_1,
+                'valid acc @ 5': accs_at_5
+            }
+            if self.sl_condition:
+                metrics['valid sl signal'] = sl_signals
+
+            if self.kd_condition:
+                metrics['valid kd signal'] = kd_signals
+
+            if self.dml_condition:
+                metrics['valid dml signal'] = dml_signals
+
+            return metrics
 
     def test(self):
         """
@@ -361,7 +508,8 @@ class Trainer(object):
             top5.update(prec_at_5.item(), images.size()[0])
 
         print(
-            '[*] Test loss: {:.3f}, top1_acc: {:.3f}%, top5_acc: {:.3f}%'.format(
+            '[*] Test loss: {:.3f}, top1_acc: {:.3f}%, top5_acc: {:.3f}%'
+            .format(
                 losses.avg, top1.avg, top5.avg)
         )
 
