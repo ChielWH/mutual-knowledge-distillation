@@ -6,13 +6,30 @@ import matplotlib.patches as patches
 from model_factories import efficientnet_factory, mobilenetv2_factory, resnet_factory
 
 from PIL import Image
+# from cached_property import cached_property
 
 
 def denormalize(T, coords):
     return (0.5 * ((coords + 1.0) * T))
 
 
-class AverageMeter(object):
+class MovingAverageMeter(object):
+    """
+    Computes and stores the average and
+    current value.
+    """
+
+    def __init__(self, alpha=0.99):
+        self.alpha = alpha
+
+    def update(self, val):
+        try:
+            self.avg = self.alpha * self.avg + (1 - self.alpha) * val
+        except AttributeError:  # initialize average with the first provided value
+            self.avg = val
+
+
+class RunningAverageMeter(object):
     """
     Computes and stores the average and
     current value.
@@ -190,7 +207,7 @@ def model_init(model_name, use_gpu, input_size, num_classes):
     return net
 
 
-if __name__ == '__main__':
+# if __name__ == '__main__':
     model_init('EFB6')
     model_init('RN302')
     model_init('MN35')

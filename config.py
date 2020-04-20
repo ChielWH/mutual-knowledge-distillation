@@ -34,7 +34,7 @@ train_arg.add_argument('--is_train', type=str2bool, default=True,
                        help='Whether to train or test the model')
 train_arg.add_argument('--momentum', type=float, default=0.9,
                        help='Momentum value')
-train_arg.add_argument('--epochs', type=int, default=200,
+train_arg.add_argument('--epochs', type=int, default=160,
                        help='# of epochs to train for')
 train_arg.add_argument('--init_lr', type=float, default=0.1,
                        help='Initial learning rate value')
@@ -44,7 +44,7 @@ train_arg.add_argument('--nesterov', type=str2bool, default=True,
                        help='Whether to use Nesterov momentum')
 train_arg.add_argument('--lr_patience', type=int, default=10,
                        help='Number of epochs to wait before reducing lr')
-train_arg.add_argument('--train_patience', type=int, default=100,
+train_arg.add_argument('--train_patience', type=int, default=25,
                        help='Number of epochs to wait before stopping train')
 train_arg.add_argument('--gamma', type=float, default=0.1,
                        help='value of learning rate decay')

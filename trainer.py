@@ -11,8 +11,9 @@ import time
 import shutil
 import warnings
 
-from utils import accuracy, AverageMeter, model_init, infer_input_size, isnotebook, print_epoch_stats
+from utils import accuracy, RunningAverageMeter, MovingAverageMeter, model_init, infer_input_size, isnotebook, print_epoch_stats
 import wandb
+# from tensorboard_logger import configure, log_value
 
 if isnotebook():
     from tqdm.notebook import tqdm
@@ -103,11 +104,12 @@ class Trainer(object):
         self.loss_kl = nn.KLDivLoss(reduction='batchmean')
         self.loss_ce = nn.CrossEntropyLoss()
 
-        # configure Weights and Biases logging
+        # configure tensorboard logging
         if self.use_wandb:
             wandb.init(name='test experiment',
                        project='mutual-knowledge-distillation')
 
+        print(self.gamma)
         for i, net in enumerate(self.nets):
             # initialize optimizer and scheduler
             optimizer = optim.SGD(net.parameters(), lr=self.lr, momentum=self.momentum,
@@ -118,6 +120,7 @@ class Trainer(object):
             # set learning rate decay
             scheduler = optim.lr_scheduler.StepLR(
                 self.optimizers[i], step_size=60, gamma=self.gamma, last_epoch=-1)
+
             self.schedulers.append(scheduler)
 
             print('[*] Number of parameters of {} model: {:,}'.format(
@@ -148,40 +151,49 @@ class Trainer(object):
             )
 
             # train for 1 epoch
-            train_losses, train_accs = self.train_one_epoch(epoch)
+            train_losses, train_accs_at_1, train_accs_at_5 = self.train_one_epoch(
+                epoch)
 
             # evaluate on validation set
-            valid_losses, valid_accs = self.validate(epoch)
+            valid_losses, valid_accs_at_1, valid_accs_at_5 = self.validate(
+                epoch)
 
-            print_epoch_stats(self.model_names, train_losses,
-                              train_accs, valid_losses, valid_accs)
+            print_epoch_stats(
+                model_names=self.model_names,
+                train_losses=train_losses,
+                train_accs=train_accs_at_1,
+                valid_losses=valid_losses,
+                valid_accs=valid_accs_at_1
+            )
 
             if self.use_wandb:
                 log_dict = {}
                 for i, model_name in enumerate(self.model_names):
                     log_dict[f'{model_name} train loss'] = train_losses[i].avg
-                    log_dict[f'{model_name} train acc'] = train_accs[i].avg
-                    log_dict[f'{model_name} val loss'] = valid_losses[i].avg
-                    log_dict[f'{model_name} val acc'] = valid_accs[i].avg
+                    log_dict[f'{model_name} train acc @ 1'] = train_accs_at_1[i].avg
+                    log_dict[f'{model_name} train acc @ 5'] = train_accs_at_5[i].avg
+                    log_dict[f'{model_name} valid loss'] = valid_losses[i].avg
+                    log_dict[f'{model_name} valid acc @ 1'] = valid_accs_at_1[i].avg
+                    log_dict[f'{model_name} valid acc @ 5'] = valid_accs_at_5[i].avg
                 wandb.log(log_dict)
 
-            # check for improvement
-            # if not is_best:
-            # self.counter += 1
-            # if self.counter > self.train_patience:
-            # print("[!] No improvement in a while, stopping training.")
-            # return
-            # self.best_valid_accs[i] = max(
-            #     valid_accs[i].avg, self.best_valid_accs[i])
-            # self.save_checkpoint(i,
-            #                      {'epoch': epoch + 1,
-            #                       'model_state': net.state_dict(),
-            #                       'optim_state': self.optimizers[i].state_dict(),
-            #                       'best_valid_acc': self.best_valid_accs[i],
-            #                       }, is_best
-            #                      )
-        for scheduler in self.schedulers:
-            scheduler.step()
+            # save epoch state
+            for i, net in enumerate(self.nets):
+                is_best = False
+                if self.best_valid_accs[i] > valid_accs_at_1[i].avg:
+                    is_best = True
+                    self.best_valid_accs[i] = valid_accs_at_1[i].avg
+
+                self.save_checkpoint(self.model_names[i],
+                                     {'epoch': epoch + 1,
+                                      'model_state': net.state_dict(),
+                                      'optim_state': self.optimizers[i].state_dict(),
+                                      'best_valid_acc': self.best_valid_accs[i],
+                                      }, is_best
+                                     )
+
+            for scheduler in self.schedulers:
+                scheduler.step()
 
     def train_one_epoch(self, epoch):
         """
@@ -192,14 +204,16 @@ class Trainer(object):
 
         This is used by train() and should not be called manually.
         """
-        batch_time = AverageMeter()
+        batch_time = RunningAverageMeter()
         losses = []
-        accs = []
+        accs_at_1 = []
+        accs_at_5 = []
 
         for net in self.nets:
             net.train()
-            losses.append(AverageMeter())
-            accs.append(AverageMeter())
+            losses.append(MovingAverageMeter())
+            accs_at_1.append(MovingAverageMeter())
+            accs_at_5.append(MovingAverageMeter())
 
         tic = time.time()
         with tqdm(total=self.num_train) as pbar:
@@ -233,10 +247,13 @@ class Trainer(object):
                     loss = sl_part + kd_part + dml_part
 
                     # measure accuracy and record loss
-                    prec = accuracy(outputs[i].data,
-                                    true_labels.data, topk=(1,))[0]
-                    losses[i].update(loss.item(), images.size()[0])
-                    accs[i].update(prec.item(), images.size()[0])
+                    prec_at_1 = accuracy(outputs[i].data,
+                                         true_labels.data, topk=(1,))[0]
+                    prec_at_5 = accuracy(outputs[i].data,
+                                         true_labels.data, topk=(5,))[0]
+                    losses[i].update(loss.item())
+                    accs_at_1[i].update(prec_at_1.item())
+                    accs_at_5[i].update(prec_at_5.item())
 
                     # compute gradients and update SGD
                     self.optimizers[i].zero_grad()
@@ -251,7 +268,7 @@ class Trainer(object):
                     (
                         "{:.1f}s - {} loss: {:.3f}, acc: {:.3f}".format(
                             (toc -
-                             tic), self.model_names[0], losses[0].avg, accs[0].avg
+                             tic), self.model_names[0], losses[0].avg, accs_at_1[0].avg
                         )
                     )
                 )
@@ -259,18 +276,20 @@ class Trainer(object):
                 self.batch_size = images.shape[0]
                 pbar.update(self.batch_size)
 
-            return losses, accs
+            return losses, accs_at_1, accs_at_5
 
     def validate(self, epoch):
         """
         Evaluate the model on the validation set.
         """
         losses = []
-        accs = []
+        accs_at_1 = []
+        accs_at_5 = []
         for i, net in enumerate(self.nets):
             net.eval()
-            losses.append(AverageMeter())
-            accs.append(AverageMeter())
+            losses.append(RunningAverageMeter())
+            accs_at_1.append(MovingAverageMeter())
+            accs_at_5.append(MovingAverageMeter())
 
         for i, batch in enumerate(self.valid_loader):
             images, true_labels, psuedo_labels = batch
@@ -302,12 +321,15 @@ class Trainer(object):
                 loss = sl_part + kd_part + dml_part
 
                 # measure accuracy and record loss
-                prec = accuracy(outputs[i].data,
-                                true_labels.data, topk=(1,))[0]
-                losses[i].update(loss.item(), images.size()[0])
-                accs[i].update(prec.item(), images.size()[0])
+                prec_at_1 = accuracy(outputs[i].data,
+                                     true_labels.data, topk=(1,))[0]
+                prec_at_5 = accuracy(outputs[i].data,
+                                     true_labels.data, topk=(5,))[0]
+                losses[i].update(loss.item())
+                accs_at_1[i].update(prec_at_1.item())
+                accs_at_5[i].update(prec_at_5.item())
 
-        return losses, accs
+        return losses, accs_at_1, accs_at_5
 
     def test(self):
         """
@@ -315,9 +337,9 @@ class Trainer(object):
         This function should only be called at the very
         end once the model has finished training.
         """
-        losses = AverageMeter()
-        top1 = AverageMeter()
-        top5 = AverageMeter()
+        losses = RunningAverageMeter()
+        top1 = RunningAverageMeter()
+        top5 = RunningAverageMeter()
 
         # load the best checkpoint
         self.load_checkpoint(best=self.best)
@@ -332,17 +354,18 @@ class Trainer(object):
             loss = self.loss_fn(outputs, labels)
 
             # measure accuracy and record loss
-            prec1, prec5 = accuracy(outputs.data, labels.data, topk=(1, 5))
+            prec_at_1, prec_at_5 = accuracy(
+                outputs.data, labels.data, topk=(1, 5))
             losses.update(loss.item(), images.size()[0])
-            top1.update(prec1.item(), images.size()[0])
-            top5.update(prec5.item(), images.size()[0])
+            top1.update(prec_at_1.item(), images.size()[0])
+            top5.update(prec_at_5.item(), images.size()[0])
 
         print(
             '[*] Test loss: {:.3f}, top1_acc: {:.3f}%, top5_acc: {:.3f}%'.format(
                 losses.avg, top1.avg, top5.avg)
         )
 
-    def save_checkpoint(self, i, state, is_best):
+    def save_checkpoint(self, model_name, state, is_best):
         """
         Save a copy of the model so that it can be loaded at a future
         date. This function is used when the model is being evaluated
@@ -353,12 +376,12 @@ class Trainer(object):
         """
         # print("[*] Saving model to {}".format(self.ckpt_dir))
 
-        filename = self.model_name + str(i + 1) + '_ckpt.pth.tar'
+        filename = model_name + '_ckpt.pth.tar'
         ckpt_path = os.path.join(self.ckpt_dir, filename)
         torch.save(state, ckpt_path)
 
         if is_best:
-            filename = self.model_name + str(i + 1) + '_model_best.pth.tar'
+            filename = model_name + '_best.pth.tar'
             shutil.copyfile(
                 ckpt_path, os.path.join(self.ckpt_dir, filename)
             )
