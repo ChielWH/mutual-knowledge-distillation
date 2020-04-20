@@ -189,14 +189,16 @@ class Trainer(object):
             valid_metrics = self.validate(
                 epoch)
 
+            # print the epoch stats to the console
             print_epoch_stats(
                 model_names=self.model_names,
-                train_losses=train_metrics['losses'],
-                train_accs=train_metrics['accs @ 1'],
-                valid_losses=valid_metrics['losses'],
-                valid_accs=valid_metrics['accs @ 1']
+                train_losses=train_metrics['train loss'],
+                train_accs=train_metrics['train acc @ 1'],
+                valid_losses=valid_metrics['valid loss'],
+                valid_accs=valid_metrics['valid acc @ 1']
             )
 
+            # log all metrics to Weights and Biases
             if self.use_wandb:
                 log_dict = {}
                 for i, model_name in enumerate(self.model_names):
@@ -208,9 +210,9 @@ class Trainer(object):
             # save epoch state
             for i, net in enumerate(self.nets):
                 is_best = False
-                if self.best_valid_accs[i] > valid_metrics['accs @ 1'][i].avg:
+                if self.best_valid_accs[i] > valid_metrics['valid acc @ 1'][i].avg:
                     is_best = True
-                    self.best_valid_accs[i] = valid_metrics['accs @ 1'][i].avg
+                    self.best_valid_accs[i] = valid_metrics['valid acc @ 1'][i].avg
 
                 self.save_checkpoint(self.model_names[i],
                                      {'epoch': epoch + 1,
