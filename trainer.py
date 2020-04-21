@@ -5,7 +5,6 @@ import torch.optim as optim
 import torch.nn.functional as F
 
 import os
-import time
 import shutil
 import warnings
 
@@ -119,9 +118,10 @@ class Trainer(object):
 
         # deep mutual learning can only be done on a set of models
         # the dml is therefore disabled for model_num <= 1 (for a kd experiment for instance)
-        self.dml_condition = self.model_num >= 2
+        self.dml_condition = any(
+            [self.model_num >= 2, bool(self.lambda_b), bool(self.lambda_a)])
 
-        # if both previous conditions are False, the sl_signal is equal to the overall loss
+        # if both previous conditions are False, the sl_signal is equal to the overall loss,
         # therefore we do not need the sl_signal explicitely
         self.sl_condition = any([self.dml_condition, self.kd_condition])
 
@@ -165,8 +165,8 @@ class Trainer(object):
         a separate ckpt is created for use on the test set.
         """
         # load the most recent checkpoint
-        if self.resume:
-            self.load_checkpoint(best=False)
+        # if self.resume:
+        #     self.load_checkpoint(best=False)
 
         print("\n[*] Train on {} samples, validate on {} samples".format(
             self.num_train, self.num_valid)
@@ -214,13 +214,14 @@ class Trainer(object):
                     is_best = True
                     self.best_valid_accs[i] = valid_metrics['valid acc @ 1'][i].avg
 
-                self.save_checkpoint(self.model_names[i],
-                                     {'epoch': epoch + 1,
-                                      'model_state': net.state_dict(),
-                                      'optim_state': self.optimizers[i].state_dict(),
-                                      'best_valid_acc': self.best_valid_accs[i],
-                                      }, is_best
-                                     )
+                self.save_checkpoint(
+                    self.model_names[i],
+                    {'epoch': epoch + 1,
+                     'model_state': net.state_dict(),
+                     'optim_state': self.optimizers[i].state_dict(),
+                     'best_valid_acc': self.best_valid_accs[i]},
+                    is_best
+                )
 
             for scheduler in self.schedulers:
                 scheduler.step()
@@ -256,7 +257,6 @@ class Trainer(object):
             if self.dml_condition:
                 dml_signals.append(MovingAverageMeter())
 
-        tic = time.time()
         with tqdm(total=self.num_train) as pbar:
             for batch_i, batch in enumerate(self.train_loader):
                 images, true_labels, psuedo_labels = batch
@@ -273,9 +273,13 @@ class Trainer(object):
                 for i in range(self.model_num):
                     # supervised learning signal
                     sl_signal = self.loss_ce(outputs[i], true_labels)
-                    sl_part = (1 - self.lambda_a) * sl_signal
+
+                    # update the signal for logging
+                    if self.sl_condition:
+                        sl_signals[i].update(sl_signal)
 
                     # initialize the overall loss
+                    sl_part = (1 - self.lambda_a) * sl_signal
                     loss = sl_part
 
                     # knowledge distillation signal
@@ -288,10 +292,13 @@ class Trainer(object):
                                 psuedo_labels[:, :, i] / self.temperature,
                                 dim=1)
                         )
-                        kd_part = (1 - self.lambda_b) * self.lambda_a * \
-                            self.temperature * self.temperature * kd_signal
+
+                        # update the signal for logging
+                        kd_signals[i].update(kd_signal)
 
                         # add kd signal to the overall loss
+                        kd_part = (1 - self.lambda_b) * self.lambda_a * \
+                            self.temperature * self.temperature * kd_signal
                         loss += kd_part
 
                     # deep mutual learning signal
@@ -303,10 +310,13 @@ class Trainer(object):
                                     F.log_softmax(outputs[i], dim=1),
                                     F.softmax(Variable(outputs[j]), dim=1)
                                 )
-                        dml_part = self.lambda_b * \
-                            (dml_signal / max(1, self.model_num - 1))
+
+                        # update the signal for logging
+                        dml_signals[i].update(dml_signal)
 
                         # add dml signal to the overall loss
+                        dml_part = self.lambda_b * \
+                            (dml_signal / max(1, self.model_num - 1))
                         loss += dml_part
 
                     # measure accuracy and record loss
@@ -319,30 +329,15 @@ class Trainer(object):
                     accs_at_5[i].update(prec_at_5.item())
                     losses[i].update(loss.item())
 
-                    # log the seperate signals if useful
-                    if self.sl_condition:
-                        sl_signals[i].update(
-                            sl_part.item() / (1 - self.lambda_a))
-
-                    if self.kd_condition:
-                        kd_signals[i].update(
-                            kd_part.item() / ((1 - self.lambda_b) * self.lambda_a))
-
-                    if self.dml_condition:
-                        dml_signals[i].update(dml_part.item() / self.lambda_b)
-
                     # compute gradients and update SGD
                     self.optimizers[i].zero_grad()
                     loss.backward()
                     self.optimizers[i].step()
 
-                # measure elapsed time
-                toc = time.time()
-
+                # update progressbar
                 pbar.set_description(
                     (
-                        "{:.1f}s - {} loss: {:.3f}, acc: {:.3f}".format(
-                            (toc - tic),
+                        "{} loss: {:.3f}, acc: {:.3f}".format(
                             self.model_names[0],
                             losses[0].avg,
                             accs_at_1[0].avg
@@ -410,21 +405,32 @@ class Trainer(object):
             for i in range(self.model_num):
                 # supervised learning signal
                 sl_signal = self.loss_ce(outputs[i], true_labels)
-                sl_part = (1 - self.lambda_a) * sl_signal
+
+                # update the signal for logging
+                if self.sl_condition:
+                    sl_signals[i].update(sl_signal)
+
                 # initialize the overall loss
+                sl_part = (1 - self.lambda_a) * sl_signal
                 loss = sl_part
 
                 # knowledge distillation signal
                 if self.kd_condition:
                     kd_signal = nn.KLDivLoss()(
-                        F.log_softmax(outputs[i] / self.temperature, dim=1),
+                        F.log_softmax(
+                            outputs[i] / self.temperature,
+                            dim=1),
                         F.softmax(
-                            psuedo_labels[:, :, i] / self.temperature, dim=1)
+                            psuedo_labels[:, :, i] / self.temperature,
+                            dim=1)
                     )
+
+                    # update the signal for logging
+                    kd_signals[i].update(kd_signal)
+
+                    # add kd signal to the overall loss
                     kd_part = (1 - self.lambda_b) * self.lambda_a * \
                         self.temperature * self.temperature * kd_signal
-
-                    # add dml signal to the overall loss
                     loss += kd_part
 
                 # deep mutual learning signal
@@ -436,10 +442,13 @@ class Trainer(object):
                                 F.log_softmax(outputs[i], dim=1),
                                 F.softmax(Variable(outputs[j]), dim=1)
                             )
-                    dml_part = self.lambda_b * \
-                        (dml_signal / max(1, self.model_num - 1))
+
+                    # update the signal for logging
+                    dml_signals[i].update(dml_signal)
 
                     # add dml signal to the overall loss
+                    dml_part = self.lambda_b * \
+                        (dml_signal / max(1, self.model_num - 1))
                     loss += dml_part
 
                 # measure accuracy and record loss
@@ -451,18 +460,6 @@ class Trainer(object):
                 accs_at_1[i].update(prec_at_1.item())
                 accs_at_5[i].update(prec_at_5.item())
                 losses[i].update(loss.item())
-
-                # log the seperate signals if useful
-                if self.sl_condition:
-                    sl_signals[i].update(
-                        sl_part.item() / (1 - self.lambda_a))
-
-                if self.kd_condition:
-                    kd_signals[i].update(
-                        kd_part.item() / ((1 - self.lambda_b) * self.lambda_a))
-
-                if self.dml_condition:
-                    dml_signals[i].update(dml_part.item() / self.lambda_b)
 
             metrics = {
                 'valid loss': losses,

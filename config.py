@@ -34,7 +34,7 @@ train_arg.add_argument('--is_train', type=str2bool, default=True,
                        help='Whether to train or test the model')
 train_arg.add_argument('--momentum', type=float, default=0.9,
                        help='Momentum value')
-train_arg.add_argument('--epochs', type=int, default=160,
+train_arg.add_argument('--epochs', type=int, default=200,
                        help='# of epochs to train for')
 train_arg.add_argument('--init_lr', type=float, default=0.1,
                        help='Initial learning rate value')
@@ -50,7 +50,7 @@ train_arg.add_argument('--gamma', type=float, default=0.1,
                        help='value of learning rate decay')
 train_arg.add_argument('--lambda_a', type=float, default=0.5,
                        help='balance between sl signal and the additional signals')
-train_arg.add_argument('--lambda_b', type=float, default=1.,
+train_arg.add_argument('--lambda_b', type=float, default=0.5,
                        help='balance between kd signal and the dml signals')
 train_arg.add_argument('--temperature', type=float, default=3,
                        help='softmax temperature')
