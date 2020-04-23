@@ -2,6 +2,7 @@ import inspect
 import numpy as np
 
 import torch
+import torch.nn.functional as F
 from torchvision import datasets
 from torchvision import transforms
 
@@ -60,6 +61,8 @@ class PsuedoLabelledDataset(torch.utils.data.Dataset):
                     f'Preparing {fold}set: creating the psuedo labels from {self.teacher_num} teachers')
                 with torch.no_grad():
                     for images, labels in data_loader:
+                        images = F.pad(input=images, pad=(
+                            4, 4, 4, 4), mode='reflect')
                         if cuda:
                             images = images.to(device)
                         psuedo_labels = torch.stack([teacher(images).cpu()
@@ -79,6 +82,8 @@ class PsuedoLabelledDataset(torch.utils.data.Dataset):
                     f'Preparing {fold}set')
                 dummy_psuedo_label = torch.empty(int(cifar), model_num)
                 for images, labels in data_loader:
+                    images = F.pad(input=images, pad=(
+                        4, 4, 4, 4), mode='reflect')
                     for image, label in zip(images, labels):
                         self.named_dataset.append(
                             tuple([image, label, dummy_psuedo_label]))
