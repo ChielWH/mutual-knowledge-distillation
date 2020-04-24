@@ -1,12 +1,13 @@
 import os
 import json
 import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-from model_factories import efficientnet_factory, mobilenetv2_factory, resnet_factory
-
+from collections import Counter, defaultdict
+from model_factories import (
+    efficientnet_factory,
+    mobilenetv2_factory,
+    resnet_factory,
+    plain_cnn_factory)
 from PIL import Image
-# from cached_property import cached_property
 
 
 def denormalize(T, coords):
@@ -19,13 +20,14 @@ class MovingAverageMeter(object):
     current value.
     """
 
-    def __init__(self, alpha=0.99):
+    def __init__(self, alpha=0.95):
         self.alpha = alpha
 
     def update(self, val):
         try:
             self.avg = self.alpha * self.avg + (1 - self.alpha) * val
-        except AttributeError:  # initialize average with the first provided value
+        except AttributeError:
+            # initialize average with the first provided value
             self.avg = val
 
 
@@ -147,18 +149,36 @@ def save_config(config):
 
 
 def print_epoch_stats(model_names, train_losses, train_accs, valid_losses, valid_accs):
+    avg_tl, avg_ta, avg_vl, avg_va = [], [], [], []
     print("Epoch statistics:")
     print("model     |train loss| train acc|  val loss|   val acc|")
     print("=" * 55)
     model_stats = "{model_name:10}|{train_loss:10.3f}|{train_acc:10.3f}|{valid_loss:10.3f}|{valid_acc:10.3f}|"
     for i, model_name in enumerate(model_names):
-        print(model_stats.format(
-            model_name=model_name,
-            train_loss=train_losses[i].avg,
-            train_acc=train_accs[i].avg,
-            valid_loss=valid_losses[i].avg,
-            valid_acc=valid_accs[i].avg)
+        print(
+            model_stats.format(
+                model_name=model_name,
+                train_loss=train_losses[i].avg,
+                train_acc=train_accs[i].avg,
+                valid_loss=valid_losses[i].avg,
+                valid_acc=valid_accs[i].avg
+            )
         )
+        avg_tl.append(train_losses[i].avg)
+        avg_ta.append(train_accs[i].avg)
+        avg_vl.append(valid_losses[i].avg)
+        avg_va.append(valid_accs[i].avg)
+
+    print("-" * 55)
+    print(
+        model_stats.format(
+            "Average",
+            np.array(avg_tl).mean(),
+            np.array(avg_ta).mean(),
+            np.array(avg_vl).mean(),
+            np.array(avg_va).mean()
+        )
+    )
 
 
 def isnotebook():
@@ -180,17 +200,38 @@ def correct_out_features(model, out_features):
         if type(module) == torch.nn.modules.linear.Linear:
             in_features = module.in_features
             bias = type(module.bias) == torch.nn.parameter.Parameter
-            setattr(model, list(model.named_modules())[idx][0], torch.nn.Linear(
-                in_features, out_features, bias=bias))
+            setattr(
+                model,
+                list(model.named_modules())[idx][0],
+                torch.nn.Linear(in_features,
+                                out_features,
+                                bias=bias)
+            )
 
 
 def infer_input_size(batch):
     return batch[0].shape[2]
 
 
+def uniquify(model_names):
+    names = []
+    count_state = defaultdict(lambda: 1)
+    counter = Counter(model_names)
+    for model_name in model_names:
+        if counter[model_name] == 1:
+            names.append(model_name)
+        else:
+            names.append(model_name + f'({count_state[model_name]})')
+            count_state[model_name] += 1
+    return names
+
+
 def model_init(model_name, use_gpu, input_size, num_classes):
     model_architecture = model_name[:2]
-    assert model_architecture in {'EF', 'MN', 'RN'}
+
+    assert model_architecture in {'EF', 'MN', 'RN', 'CN'}, \
+        "Model architecture abbreviation must be in [EF, MN, RN, CN]"
+
     size_indicator = model_name[2:]
     if model_architecture == 'EF':
         net = efficientnet_factory.create_model(size_indicator)
@@ -202,12 +243,21 @@ def model_init(model_name, use_gpu, input_size, num_classes):
     elif model_architecture == 'RN':
         net = resnet_factory.create_model(size_indicator)
         correct_out_features(net, num_classes)
+    elif model_architecture == 'CN':
+        net = plain_cnn_factory.create_model(
+            size_indicator, input_size, num_classes)
     if use_gpu:
         net.cuda()
     return net
 
 
-# if __name__ == '__main__':
-    model_init('EFB6')
-    model_init('RN302')
-    model_init('MN35')
+if __name__ == '__main__':
+    use_gpu, input_size, num_classes = False, 40, 100
+    model_init('EFB6', use_gpu=use_gpu,
+               input_size=input_size, num_classes=num_classes)
+    model_init('RN302', use_gpu=use_gpu,
+               input_size=input_size, num_classes=num_classes)
+    model_init('MN35', use_gpu=use_gpu,
+               input_size=input_size, num_classes=num_classes)
+    model_init('CN10', use_gpu=use_gpu,
+               input_size=input_size, num_classes=num_classes)

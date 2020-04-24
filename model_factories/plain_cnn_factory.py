@@ -6,7 +6,8 @@ class ConvNetMaker(nn.Module):
     Creates a simple (plane) convolutional neural network
     """
 
-    def __init__(self, layers):
+    # def __init__(self, layers):
+    def __init__(self, layers, input_size):
         """
         Makes a cnn using the provided list of layers specification
         The details of this list is available in the paper
@@ -15,7 +16,8 @@ class ConvNetMaker(nn.Module):
         super(ConvNetMaker, self).__init__()
         self.conv_layers = []
         self.fc_layers = []
-        h, w, d = 32, 32, 3
+        # h, w, d = 32, 32, 3
+        h, w, d = input_size, input_size, 3
         previous_layer_filter_count = 3
         previous_layer_size = h * w * d
         num_fc_layers_remained = len([1 for l in layers if l.startswith('FC')])
@@ -84,10 +86,10 @@ plain_cifar100_book = {
 }
 
 
-def create_model(size, output_size):
+def create_model(size, input_size, num_classes):
     assert size in {'2', '4', '6', '8', '10'}
-    assert output_size in {10, 100}
-    if output_size == 10:
-        return ConvNetMaker(plain_cifar10_book[size])
-    if output_size == 100:
-        return ConvNetMaker(plain_cifar100_book[size])
+    assert num_classes in {10, 100}
+    if num_classes == 10:
+        return ConvNetMaker(plain_cifar10_book[size], input_size)
+    if num_classes == 100:
+        return ConvNetMaker(plain_cifar100_book[size], input_size)

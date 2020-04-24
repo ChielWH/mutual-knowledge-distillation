@@ -20,11 +20,13 @@ class PsuedoLabelledDataset(torch.utils.data.Dataset):
     def __init__(self,
                  data_dir,
                  trans,
-                 batch_size=16,
+                 pad,
+                 pad_mode,
+                 batch_size,
+                 train,
+                 model_num,
                  cifar='100',
                  download=False,
-                 train=True,
-                 model_num=3,
                  teachers=[],
                  cuda=False):
         """
@@ -33,6 +35,7 @@ class PsuedoLabelledDataset(torch.utils.data.Dataset):
         self.teacher_num = len(teachers)
 
         device = torch.device('cuda') if cuda else torch.device('cpu')
+        padding = [pad] * 4
 
         # get the correct CIFAR dataset
         cifar_dataset = getattr(datasets, f'CIFAR{cifar}')
@@ -61,8 +64,11 @@ class PsuedoLabelledDataset(torch.utils.data.Dataset):
                     f'Preparing {fold}set: creating the psuedo labels from {self.teacher_num} teachers')
                 with torch.no_grad():
                     for images, labels in data_loader:
-                        images = F.pad(input=images, pad=(
-                            4, 4, 4, 4), mode='reflect')
+                        images = F.pad(
+                            input=images,
+                            pad=padding,
+                            mode=pad_mode
+                        )
                         if cuda:
                             images = images.to(device)
                         psuedo_labels = torch.stack([teacher(images).cpu()
@@ -82,8 +88,11 @@ class PsuedoLabelledDataset(torch.utils.data.Dataset):
                     f'Preparing {fold}set')
                 dummy_psuedo_label = torch.empty(int(cifar), model_num)
                 for images, labels in data_loader:
-                    images = F.pad(input=images, pad=(
-                        4, 4, 4, 4), mode='reflect')
+                    images = F.pad(
+                        input=images,
+                        pad=padding,
+                        mode=pad_mode
+                    )
                     for image, label in zip(images, labels):
                         self.named_dataset.append(
                             tuple([image, label, dummy_psuedo_label]))
@@ -98,9 +107,11 @@ class PsuedoLabelledDataset(torch.utils.data.Dataset):
 
 def get_train_loader(data_dir,
                      batch_size,
+                     pad,
+                     pad_mode,
+                     model_num,
                      cifar='100',
                      download=False,
-                     model_num=3,
                      teachers=[],
                      cuda=False,
                      random_seed=2020,
@@ -130,10 +141,13 @@ def get_train_loader(data_dir,
 
     dataset = PsuedoLabelledDataset(data_dir=data_dir,
                                     trans=trans,
+                                    pad=pad,
+                                    pad_mode=pad_mode,
                                     batch_size=batch_size,
                                     cifar=cifar,
                                     download=download,
                                     train=True,
+                                    model_num=model_num,
                                     teachers=teachers,
                                     cuda=cuda)
 
@@ -151,9 +165,11 @@ def get_train_loader(data_dir,
 
 def get_test_loader(data_dir,
                     batch_size,
+                    pad,
+                    pad_mode,
+                    model_num,
                     cifar='100',
                     download=False,
-                    model_num=3,
                     teachers=[],
                     cuda=False,
                     random_seed=2020,
@@ -185,10 +201,13 @@ def get_test_loader(data_dir,
     # load dataset
     dataset = PsuedoLabelledDataset(data_dir=data_dir,
                                     trans=trans,
+                                    pad=pad,
+                                    pad_mode=pad_mode,
                                     batch_size=batch_size,
                                     cifar=cifar,
                                     download=download,
                                     train=False,
+                                    model_num=model_num,
                                     teachers=teachers,
                                     cuda=cuda)
 

@@ -16,6 +16,7 @@ from utils import (
     MovingAverageMeter,
     model_init,
     infer_input_size,
+    uniquify,
     isnotebook,
     print_epoch_stats
 )
@@ -93,15 +94,14 @@ class Trainer(object):
         self.train_patience = config.train_patience
         self.use_wandb = config.use_wandb
         self.resume = config.resume
-        self.model_name = config.save_name
 
         # MODEL SPECIFIC PARAMS
-        self.model_names = config.model_names
         self.nets = [model_init(model_name,
                                 self.use_gpu,
                                 self.input_size,
                                 self.num_classes)
-                     for model_name in self.model_names]
+                     for model_name in config.model_names]
+        self.model_names = uniquify(config.model_names)
         self.model_num = len(self.model_names)
 
         # LIST AND FUNC INITIALIZATIONS
@@ -336,12 +336,9 @@ class Trainer(object):
 
                 # update progressbar
                 pbar.set_description(
-                    (
-                        "{} loss: {:.3f}, acc: {:.3f}".format(
-                            self.model_names[0],
-                            losses[0].avg,
-                            accs_at_1[0].avg
-                        )
+                    "Average loss: {:.3f}, average acc: {:.3f}".format(
+                        sum([l.avg for l in losses]) / len(losses),
+                        sum([a.avg for a in accs_at_1]) / len(accs_at_1)
                     )
                 )
 

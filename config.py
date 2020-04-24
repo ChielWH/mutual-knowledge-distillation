@@ -18,8 +18,12 @@ def add_argument_group(name):
 data_arg = add_argument_group('Data Params')
 data_arg.add_argument('--num_classes', type=int, default=100,
                       help='Number of classes to classify')
-data_arg.add_argument('--batch_size', type=int, default=256,
+data_arg.add_argument('--batch_size', type=int, default=64,
                       help='# of images in each batch of data')
+data_arg.add_argument('--padding', type=int, default=4,
+                      help='number of pixels to pad around the image')
+data_arg.add_argument('--pad_mode', type=str, default='relfect',
+                      help='padding mode')
 data_arg.add_argument('--num_workers', type=int, default=4,
                       help='# of subprocesses to use for data loading')
 data_arg.add_argument('--pin_memory', type=str2bool, default=True,
@@ -48,6 +52,8 @@ train_arg.add_argument('--train_patience', type=int, default=25,
                        help='Number of epochs to wait before stopping train')
 train_arg.add_argument('--gamma', type=float, default=0.1,
                        help='value of learning rate decay')
+train_arg.add_argument('--lr_step', type=int, default=60,
+                       help='number of epochs after which the lr is multiplied with gamma')
 train_arg.add_argument('--lambda_a', type=float, default=0.5,
                        help='balance between sl signal and the additional signals')
 train_arg.add_argument('--lambda_b', type=float, default=0.5,
