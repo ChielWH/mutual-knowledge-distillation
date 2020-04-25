@@ -71,16 +71,18 @@ misc_arg.add_argument('--random_seed', type=int, default=1,
                       help='Seed to ensure reproducibility')
 misc_arg.add_argument('--data_dir', type=str, default='./data/cifar100',
                       help='Directory in which data is stored')
-misc_arg.add_argument('--ckpt_dir', type=str, default='./ckpt',
-                      help='Directory in which to save model checkpoints')
-misc_arg.add_argument('--logs_dir', type=str, default='./logs/',
-                      help='Directory in which Tensorboard logs wil be stored')
+# misc_arg.add_argument('--ckpt_dir', type=str, default='./ckpt',
+#                       help='Directory in which to save model checkpoints')
+# misc_arg.add_argument('--logs_dir', type=str, default='./logs/',
+#                       help='Directory in which Tensorboard logs wil be stored')
 misc_arg.add_argument('--use_wand', type=str2bool, default=False,
                       help='Whether to use Weights and Biases for visualization')
 misc_arg.add_argument('--resume', type=str2bool, default=False,
                       help='Whether to resume training from checkpoint')
-misc_arg.add_argument('--save_name', type=str, default='model',
-                      help='Name of the model to save as')
+misc_arg.add_argument('--experiment_name', type=str, default='test_experiment',
+                      help='Name of the experiment, used to store all logs and checkpoints')
+misc_arg.add_argument('--experiment_level', type=int, default=1,
+                      help='Level in the experiment, only succesive levels can be passed in here, level 1 must exist before level 2 can be build')
 misc_arg.add_argument('--model_names', nargs='+', default=['RN14', 'MN20', 'EFB0'],
                       help='The abbreviation of the model name with size indicator',
                       choices=['EFB0', 'EFB1', 'EFB2', 'EFB3', 'EFB4', 'EFB5', 'EFB6', 'EFB7',

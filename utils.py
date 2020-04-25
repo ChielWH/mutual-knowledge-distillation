@@ -130,10 +130,14 @@ def array2img(x):
     return Image.fromarray(x.astype('uint8'), 'RGB')
 
 
-def prepare_dirs(config):
-    for path in [config.ckpt_dir, config.logs_dir]:
+def prepare_dirs(config, return_dir=True):
+    experiment_name = config.experiment_name.lower().replace(' ', '_')
+    for path in [f'{experiment_name}', f'{experiment_name}/ckpt']:
+        path = 'experiments/' + path
         if not os.path.exists(path):
             os.makedirs(path)
+    if return_dir:
+        return './experiments/' + experiment_name
 
 
 def save_config(config):
@@ -172,11 +176,11 @@ def print_epoch_stats(model_names, train_losses, train_accs, valid_losses, valid
     print("-" * 55)
     print(
         model_stats.format(
-            "Average",
-            np.array(avg_tl).mean(),
-            np.array(avg_ta).mean(),
-            np.array(avg_vl).mean(),
-            np.array(avg_va).mean()
+            model_name="Average",
+            train_loss=np.array(avg_tl).mean(),
+            train_acc=np.array(avg_ta).mean(),
+            valid_loss=np.array(avg_vl).mean(),
+            valid_acc=np.array(avg_va).mean()
         )
     )
 
@@ -224,6 +228,24 @@ def uniquify(model_names):
             names.append(model_name + f'({count_state[model_name]})')
             count_state[model_name] += 1
     return names
+
+
+def infer_model_desc(model_name):
+    name_dict = {'EF': 'EfficientNet',
+                 'MN': 'MobileNetV2',
+                 'RN': 'ResNet',
+                 'CN': 'VGG like CNN'
+                 }
+    mn_size_dict = {
+        str(size): f'scale={int(size)/100}' for size in range(10, 255, 5)}
+
+    arch = model_name[:2]
+    architecture = name_dict[arch]
+    size_indicator = model_name[2:]
+    if arch == 'MN':
+        size_indicator = mn_size_dict[size_indicator]
+
+    return architecture, size_indicator
 
 
 def model_init(model_name, use_gpu, input_size, num_classes):

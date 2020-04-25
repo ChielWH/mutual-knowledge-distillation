@@ -1,29 +1,18 @@
 import torch
 import torch.nn as nn
-from torch.autograd import Variable
-import torch.optim as optim
 import torch.nn.functional as F
+from torch.autograd import Variable
 
 import os
 import shutil
 import warnings
-
 import wandb
-
-from utils import (
-    accuracy,
-    RunningAverageMeter,
-    MovingAverageMeter,
-    model_init,
-    infer_input_size,
-    uniquify,
-    isnotebook,
-    print_epoch_stats
-)
+import utils
+from utils import accuracy, RunningAverageMeter, MovingAverageMeter
 
 # from tensorboard_logger import configure, log_value
 
-if isnotebook():
+if utils.isnotebook():
     from tqdm.notebook import tqdm
 else:
     from tqdm import tqdm
@@ -66,7 +55,7 @@ class Trainer(object):
             self.test_loader = data_loader
             self.num_test = len(self.test_loader.dataset)
             batch = next(iter(self.test_loader))
-        self.input_size = infer_input_size(batch)
+        self.input_size = utils.infer_input_size(batch)
         self.num_classes = config.num_classes
 
         # TRAINING PARAMS
@@ -87,21 +76,22 @@ class Trainer(object):
         else:
             self.use_gpu = False
         self.best = config.best
-        self.ckpt_dir = config.ckpt_dir
-        self.logs_dir = config.logs_dir
+        self.experiment_name = config.experiment_name
         self.counter = 0
         self.lr_patience = config.lr_patience
         self.train_patience = config.train_patience
         self.use_wandb = config.use_wandb
+        self.experiment_name = config.experiment_name
+        self.experiment_level = config.experiment_level
         self.resume = config.resume
 
         # MODEL SPECIFIC PARAMS
-        self.nets = [model_init(model_name,
-                                self.use_gpu,
-                                self.input_size,
-                                self.num_classes)
+        self.nets = [utils.model_init(model_name,
+                                      self.use_gpu,
+                                      self.input_size,
+                                      self.num_classes)
                      for model_name in config.model_names]
-        self.model_names = uniquify(config.model_names)
+        self.model_names = utils.uniquify(config.model_names)
         self.model_num = len(self.model_names)
 
         # LIST AND FUNC INITIALIZATIONS
@@ -125,14 +115,22 @@ class Trainer(object):
         # therefore we do not need the sl_signal explicitely
         self.sl_condition = any([self.dml_condition, self.kd_condition])
 
-        # CONFIGURE TENSORBOARD LOGGING
+        # CONFIGURE WEIGHTS & BIASES LOGGING AND SAVE DIR
+        self.experiment_dir = utils.prepare_dirs(config)
         if self.use_wandb:
-            wandb.init(name='test experiment',
-                       project='mutual-knowledge-distillation')
+            wandb.init(name=f'Level {self.experiment_level}',
+                       project=self.experiment_name,
+                       dir=self.experiment_dir,
+                       config=config,
+                       id=str(self.experiment_level),
+                       tags=list(set(config.model_names))
+                       )
 
+        # INITIALIZE OPTIMIZER & SCHEDULER AND LOG THE MODEL DESCRIPTIONS
+        model_stats = []
         for i, net in enumerate(self.nets):
-            # initialize optimizer and scheduler
-            optimizer = optim.SGD(
+
+            optimizer = torch.optim.SGD(
                 net.parameters(),
                 lr=self.lr,
                 momentum=self.momentum,
@@ -143,7 +141,7 @@ class Trainer(object):
             self.optimizers.append(optimizer)
 
             # set learning rate decay
-            scheduler = optim.lr_scheduler.StepLR(
+            scheduler = torch.optim.lr_scheduler.StepLR(
                 self.optimizers[i],
                 step_size=60,
                 gamma=self.gamma,
@@ -152,9 +150,21 @@ class Trainer(object):
 
             self.schedulers.append(scheduler)
 
+            model_name = self.model_names[i]
+            architecture, size_indicator = utils.infer_model_desc(model_name)
+            params = sum([p.data.nelement() for p in net.parameters()])
             print('[*] Number of parameters of {} model: {:,}'.format(
-                self.model_names[i],
-                sum([p.data.nelement() for p in net.parameters()])))
+                model_name,
+                params)
+            )
+            model_stats.append(
+                [model_name,
+                 architecture,
+                 size_indicator,
+                 f'{i:,}'.replace(',', '.')]
+            )
+        wandb.log({"examples": wandb.Table(data=model_stats, columns=[
+                  "Model name", "Architecture", "Size indicator", "# params"])})
 
     def train(self):
         """
@@ -190,7 +200,7 @@ class Trainer(object):
                 epoch)
 
             # print the epoch stats to the console
-            print_epoch_stats(
+            utils.print_epoch_stats(
                 model_names=self.model_names,
                 train_losses=train_metrics['train loss'],
                 train_accs=train_metrics['train acc @ 1'],
@@ -220,7 +230,8 @@ class Trainer(object):
                      'model_state': net.state_dict(),
                      'optim_state': self.optimizers[i].state_dict(),
                      'best_valid_acc': self.best_valid_accs[i]},
-                    is_best
+                    is_best,
+                    self.use_wandb
                 )
 
             for scheduler in self.schedulers:
@@ -509,7 +520,7 @@ class Trainer(object):
                 losses.avg, top1.avg, top5.avg)
         )
 
-    def save_checkpoint(self, model_name, state, is_best):
+    def save_checkpoint(self, model_name, state, is_best, use_wandb):
         """
         Save a copy of the model so that it can be loaded at a future
         date. This function is used when the model is being evaluated
@@ -521,11 +532,23 @@ class Trainer(object):
         # print("[*] Saving model to {}".format(self.ckpt_dir))
 
         filename = model_name + '_ckpt.pth.tar'
-        ckpt_path = os.path.join(self.ckpt_dir, filename)
+        ckpt_path = os.path.join(
+            self.experiment_dir,
+            'ckpt',
+            filename
+        )
         torch.save(state, ckpt_path)
+        if use_wandb:  # currently getting symlink errors (on Colab)
+            # wandb.save(ckpt_path)
+            pass
 
         if is_best:
-            filename = model_name + '_best.pth.tar'
-            shutil.copyfile(
-                ckpt_path, os.path.join(self.ckpt_dir, filename)
+            path = os.path.join(
+                self.experiment_dir,
+                'ckpt',
+                model_name + '_best.pth.tar'
             )
+            shutil.copyfile(ckpt_path, path)
+            if use_wandb:
+                # wandb.save(path)
+                pass
