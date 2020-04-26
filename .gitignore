@@ -1,5 +1,5 @@
 data/*
-logs/*
+experiments/*
 ckpt/*
 *wandb/
 !*/README.md
@@ -7,4 +7,4 @@ ckpt/*
 *.pyc
 *.DS_store
 *__pycache__
-personal_utils.py
+test.py

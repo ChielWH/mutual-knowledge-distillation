@@ -9,33 +9,46 @@ import torch
 
 from trainer import Trainer
 from config import get_config
-from utils import prepare_dirs, save_config
+from utils import save_config, load_teachers
 from data_loader import get_test_loader, get_train_loader
 
 
 def main(config):
-
-    # ensure directories are setup
-    prepare_dirs(config)
-
     # ensure reproducibility
-    #torch.manual_seed(config.random_seed)
+    torch.manual_seed(config.random_seed)
     kwargs = {}
-    if config.use_gpu:
-        #torch.cuda.manual_seed_all(config.random_seed)
-        kwargs = {'num_workers': config.num_workers, 'pin_memory': config.pin_memory}
-        #torch.backends.cudnn.deterministic = True
-        
+    if not config.disable_cuda and torch.cuda.is_available():
+        use_gpu = True
+        torch.cuda.manual_seed_all(config.random_seed)
+        kwargs = {'num_workers': config.num_workers,
+                  'pin_memory': config.pin_memory}
+    else:
+        use_gpu = False
+
+    teachers = load_teachers(config, use_gpu, 40)
+
     # instantiate data loaders
-    test_data_loader = get_test_loader(
-        config.data_dir, config.batch_size, **kwargs
-    )
-    
+    test_data_loader = get_test_loader(data_dir=config.data_dir,
+                                       batch_size=config.batch_size,
+                                       pad=config.padding,
+                                       pad_mode=config.pad_mode,
+                                       cuda=use_gpu,
+                                       teachers=teachers,
+                                       model_num=len(config.model_names),
+                                       **kwargs)
+
     if config.is_train:
-        train_data_loader = get_train_loader(
-            config.data_dir, config.batch_size,
-            config.random_seed, config.shuffle, **kwargs
-        )
+        train_data_loader = get_train_loader(data_dir=config.data_dir,
+                                             batch_size=config.batch_size,
+                                             pad=config.padding,
+                                             pad_mode=config.pad_mode,
+                                             random_seed=config.random_seed,
+                                             shuffle=config.shuffle,
+                                             model_num=len(config.model_names),
+                                             teachers=teachers,
+                                             cuda=use_gpu,
+                                             **kwargs)
+
         data_loader = (train_data_loader, test_data_loader)
     else:
         data_loader = test_data_loader

@@ -49,19 +49,21 @@ class PsuedoLabelledDataset(torch.utils.data.Dataset):
         # get the fold by inspecting the function that instantiates the class
         caller = inspect.stack()[1][3]
         fold = 'train' if caller == 'get_train_loader' else 'test'
-
         if teachers:
             # prepare and assert the teachers behaviour
-            sample_batch = next(iter(data_loader))[0].to(device)
+            sample_images = next(iter(data_loader))[0].to(device)
+            sample_images = F.pad(input=sample_images,
+                                  pad=padding,
+                                  mode=pad_mode)
             for teacher in teachers:
                 teacher = teacher.to(device)
                 teacher.eval()
-                assert teacher(sample_batch).shape == (batch_size, int(cifar))
+                assert teacher(sample_images).shape == (batch_size, int(cifar))
 
             # create the psuedo labels
             with tqdm(total=len(data_loader) * batch_size) as pbar:
                 pbar.set_description(
-                    f'Preparing {fold}set: creating the psuedo labels from {self.teacher_num} teachers')
+                    f'Preparing {fold}set: creating the psuedo labels')
                 with torch.no_grad():
                     for images, labels in data_loader:
                         images = F.pad(
@@ -71,12 +73,16 @@ class PsuedoLabelledDataset(torch.utils.data.Dataset):
                         )
                         if cuda:
                             images = images.to(device)
-                        psuedo_labels = torch.stack([teacher(images).cpu()
-                                                     for teacher in teachers], -1)
+                        psuedo_labels = torch.stack(
+                            [teacher(images).cpu()
+                             for teacher in teachers], -1
+                        )
                         if cuda:
                             images = images.cpu()
                             psuedo_labels = psuedo_labels.cpu()
-                        for image, label, psuedo_label in zip(images, labels, psuedo_labels):
+                        for image, label, psuedo_label in zip(images,
+                                                              labels,
+                                                              psuedo_labels):
                             self.named_dataset.append(
                                 tuple([image, label, psuedo_label]))
                         pbar.update(batch_size)

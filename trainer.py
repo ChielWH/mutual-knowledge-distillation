@@ -76,22 +76,24 @@ class Trainer(object):
         else:
             self.use_gpu = False
         self.best = config.best
-        self.experiment_name = config.experiment_name
         self.counter = 0
         self.lr_patience = config.lr_patience
         self.train_patience = config.train_patience
         self.use_wandb = config.use_wandb
-        self.experiment_name = config.experiment_name
+        self.experiment_name = config.experiment_name.lower().replace(' ', '_')
         self.experiment_level = config.experiment_level
         self.resume = config.resume
 
         # MODEL SPECIFIC PARAMS
+        self.model_names = config.model_names
         self.nets = [utils.model_init(model_name,
                                       self.use_gpu,
                                       self.input_size,
                                       self.num_classes)
-                     for model_name in config.model_names]
-        self.model_names = utils.uniquify(config.model_names)
+                     for model_name in self.model_names]
+
+        self.indexed_model_names = [
+            f'({i})_{model_name}' for i, model_name in enumerate(self.model_names, 1)]
         self.model_num = len(self.model_names)
 
         # LIST AND FUNC INITIALIZATIONS
@@ -161,7 +163,7 @@ class Trainer(object):
                 [model_name,
                  architecture,
                  size_indicator,
-                 f'{i:,}'.replace(',', '.')]
+                 f'{params:,}'.replace(',', '.')]
             )
         wandb.log({"examples": wandb.Table(data=model_stats, columns=[
                   "Model name", "Architecture", "Size indicator", "# params"])})
@@ -201,7 +203,7 @@ class Trainer(object):
 
             # print the epoch stats to the console
             utils.print_epoch_stats(
-                model_names=self.model_names,
+                model_names=self.indexed_model_names,
                 train_losses=train_metrics['train loss'],
                 train_accs=train_metrics['train acc @ 1'],
                 valid_losses=valid_metrics['valid loss'],
@@ -211,7 +213,7 @@ class Trainer(object):
             # log all metrics to Weights and Biases
             if self.use_wandb:
                 log_dict = {}
-                for i, model_name in enumerate(self.model_names):
+                for i, model_name in enumerate(self.indexed_model_names):
                     for metric_dict in [train_metrics, valid_metrics]:
                         for metric_name, avg_meter in metric_dict.items():
                             log_dict[f'{model_name} {metric_name}'] = avg_meter[i].avg
@@ -220,12 +222,12 @@ class Trainer(object):
             # save epoch state
             for i, net in enumerate(self.nets):
                 is_best = False
-                if self.best_valid_accs[i] > valid_metrics['valid acc @ 1'][i].avg:
+                if self.best_valid_accs[i] < valid_metrics['valid acc @ 1'][i].avg:
                     is_best = True
                     self.best_valid_accs[i] = valid_metrics['valid acc @ 1'][i].avg
 
                 self.save_checkpoint(
-                    self.model_names[i],
+                    self.indexed_model_names[i],
                     {'epoch': epoch + 1,
                      'model_state': net.state_dict(),
                      'optim_state': self.optimizers[i].state_dict(),

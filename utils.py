@@ -1,5 +1,6 @@
 import os
 import json
+import torch
 import numpy as np
 from collections import Counter, defaultdict
 from model_factories import (
@@ -132,12 +133,13 @@ def array2img(x):
 
 def prepare_dirs(config, return_dir=True):
     experiment_name = config.experiment_name.lower().replace(' ', '_')
-    for path in [f'{experiment_name}', f'{experiment_name}/ckpt']:
-        path = 'experiments/' + path
-        if not os.path.exists(path):
-            os.makedirs(path)
+    level = f'level_{config.experiment_level}'
+    level_path = os.path.join('experiments', experiment_name, level)
+    ckpt_path = os.path.join(level_path, 'ckpt')
+    if not os.path.exists(ckpt_path):
+        os.makedirs(ckpt_path)
     if return_dir:
-        return './experiments/' + experiment_name
+        return level_path
 
 
 def save_config(config):
@@ -246,6 +248,30 @@ def infer_model_desc(model_name):
         size_indicator = mn_size_dict[size_indicator]
 
     return architecture, size_indicator
+
+
+def load_teachers(config, use_gpu, input_size):
+    level = config.experiment_level
+    if level < 1:
+        raise ValueError('experiment_level must be an integer of 1 or higher')
+    elif level == 1:
+        return []
+    elif level > 1:
+        experiment_name = config.experiment_name.lower().replace(' ', '_')
+        prev_dir_name = f'experiments/{experiment_name}/level_{level - 1}/ckpt/'
+        assert os.path.exists(
+            prev_dir_name), "Can only carry out levels that are the level 1 or of which all previous levels have been run."
+        ckpts = os.listdir(prev_dir_name)
+        bests = list(sorted([path for path in ckpts if 'best' in path]))
+        teachers = []
+        for f_name in bests:
+            state_dict = torch.load(prev_dir_name + f_name)
+            model_name = f_name.split('_')[1]
+            model = model_init(
+                model_name, use_gpu, input_size, config.num_classes)
+            model.load_state_dict(state_dict['model_state'])
+            teachers.append(model)
+    return teachers
 
 
 def model_init(model_name, use_gpu, input_size, num_classes):

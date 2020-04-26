@@ -22,7 +22,7 @@ data_arg.add_argument('--batch_size', type=int, default=64,
                       help='# of images in each batch of data')
 data_arg.add_argument('--padding', type=int, default=4,
                       help='number of pixels to pad around the image')
-data_arg.add_argument('--pad_mode', type=str, default='relfect',
+data_arg.add_argument('--pad_mode', type=str, default='constant',
                       help='padding mode')
 data_arg.add_argument('--num_workers', type=int, default=4,
                       help='# of subprocesses to use for data loading')
@@ -71,10 +71,6 @@ misc_arg.add_argument('--random_seed', type=int, default=1,
                       help='Seed to ensure reproducibility')
 misc_arg.add_argument('--data_dir', type=str, default='./data/cifar100',
                       help='Directory in which data is stored')
-# misc_arg.add_argument('--ckpt_dir', type=str, default='./ckpt',
-#                       help='Directory in which to save model checkpoints')
-# misc_arg.add_argument('--logs_dir', type=str, default='./logs/',
-#                       help='Directory in which Tensorboard logs wil be stored')
 misc_arg.add_argument('--use_wand', type=str2bool, default=False,
                       help='Whether to use Weights and Biases for visualization')
 misc_arg.add_argument('--resume', type=str2bool, default=False,
