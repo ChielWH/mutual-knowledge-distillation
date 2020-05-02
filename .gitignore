@@ -1,6 +1,5 @@
 data/*
 experiments/*
-ckpt/*
 *wandb/
 !*/README.md
 *.ipynb*
