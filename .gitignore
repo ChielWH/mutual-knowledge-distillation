@@ -7,4 +7,4 @@ ckpt/*
 *.pyc
 *.DS_store
 *__pycache__
-test.py
+*lisa*

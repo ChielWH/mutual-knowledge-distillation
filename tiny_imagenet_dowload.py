@@ -49,7 +49,7 @@ for path in paths:
         dest = test_folder + str(folder) + '/images/' + str(file)
     shutil.move(path, dest)
 
-os.rmdir('tiny-imagenet-200.zip')
+os.remove('tiny-imagenet-200.zip')
 os.rmdir('./tiny-imagenet-200/val/images')
 
 # removing the .txt files containing the bounding boxes
