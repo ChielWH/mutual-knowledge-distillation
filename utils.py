@@ -262,11 +262,12 @@ def load_teachers(config, devices, input_size):
         experiment_name = config.experiment_name.lower().replace(' ', '_')
         prev_dir_name = f'experiments/{experiment_name}/level_{level - 1}/ckpt/'
         assert os.path.exists(
-            prev_dir_name), "Can only carry out levels that are the level 1 or of which all previous levels have been run."
+            prev_dir_name), "Can only load teacher models from levels of which all previous levels have been run."
         ckpts = os.listdir(prev_dir_name)
         bests = list(sorted([path for path in ckpts if 'best' in path]))
         teachers = []
         model_names = [f_name.split('_')[1] for f_name in bests]
+        assert len(model_names) == len(config.model_names), f"Can not find all model checkpoints, found {model_names} to teach {config.model_names}"
         models = model_init_and_placement(
             model_names,
             devices,
