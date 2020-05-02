@@ -6,6 +6,7 @@ from torch.autograd import Variable
 import os
 import shutil
 import warnings
+import itertools
 import wandb
 import utils
 from utils import accuracy, RunningAverageMeter, MovingAverageMeter
@@ -72,13 +73,15 @@ class Trainer(object):
 
         # MISCELLANEOUS PARAMS
         if not config.disable_cuda and torch.cuda.is_available():
+            self.devices = [f'cuda:{i}' for i in range(
+                torch.cuda.device_count())]
             self.use_gpu = True
         else:
+            self.devices = ['cpu']
             self.use_gpu = False
         self.best = config.best
         self.counter = 0
         self.lr_patience = config.lr_patience
-        self.train_patience = config.train_patience
         self.use_wandb = config.use_wandb
         self.experiment_name = config.experiment_name.lower().replace(' ', '_')
         self.experiment_level = config.experiment_level
@@ -86,12 +89,11 @@ class Trainer(object):
 
         # MODEL SPECIFIC PARAMS
         self.model_names = config.model_names
-        self.nets = [utils.model_init(model_name,
-                                      self.use_gpu,
-                                      self.input_size,
-                                      self.num_classes)
-                     for model_name in self.model_names]
-
+        self.nets = utils.model_init_and_placement(
+            self.model_names,
+            self.devices,
+            self.input_size,
+            self.num_classes)
         self.indexed_model_names = [
             f'({i})_{model_name}' for i, model_name in enumerate(self.model_names, 1)]
         self.model_num = len(self.model_names)
@@ -165,8 +167,9 @@ class Trainer(object):
                  size_indicator,
                  f'{params:,}'.replace(',', '.')]
             )
-        wandb.log({"examples": wandb.Table(data=model_stats, columns=[
-                  "Model name", "Architecture", "Size indicator", "# params"])})
+        if self.use_wandb:
+            wandb.log({"examples": wandb.Table(data=model_stats, columns=[
+                "Model name", "Architecture", "Size indicator", "# params"])})
 
     def train(self):
         """
@@ -270,22 +273,32 @@ class Trainer(object):
             if self.dml_condition:
                 dml_signals.append(MovingAverageMeter())
 
+        # ITERATE OVER DATALOADER
         with tqdm(total=self.num_train) as pbar:
             for batch_i, batch in enumerate(self.train_loader):
-                images, true_labels, psuedo_labels = batch
-                if self.use_gpu:
-                    images = images.cuda()
-                    true_labels = true_labels.cuda()
-                    psuedo_labels = psuedo_labels.cuda()
-                images, true_labels = Variable(images), Variable(true_labels)
+
+                # unpack batch
+                _images, _true_labels, _psuedo_labels = batch
+
+                # place the data to the possibly multiple devices
+                images, true_labels, psuedo_labels = [], [], []
+                for i, device in zip(range(self.model_num), itertools.cycle(self.devices)):
+                    images.append(
+                        Variable(_images.clone().to(device)))
+                    true_labels.append(
+                        Variable(_true_labels.clone().to(device)))
+                    psuedo_labels.append(
+                        _psuedo_labels[:, :, i].to(device))
 
                 # forward pass
                 outputs = []
-                for net in self.nets:
-                    outputs.append(net(images))
+                for i, net in enumerate(self.nets):
+                    outputs.append(net(images[i]))
+
+                # CALCULATE AGGREGATED LOSSES AND UPDATE PARAMETERS
                 for i in range(self.model_num):
                     # supervised learning signal
-                    sl_signal = self.loss_ce(outputs[i], true_labels)
+                    sl_signal = self.loss_ce(outputs[i], true_labels[i])
 
                     # update the signal for logging
                     if self.sl_condition:
@@ -302,7 +315,8 @@ class Trainer(object):
                                 outputs[i] / self.temperature,
                                 dim=1),
                             F.softmax(
-                                psuedo_labels[:, :, i] / self.temperature,
+                                # psuedo_labels[:, :, i] / self.temperature,
+                                psuedo_labels[i] / self.temperature,
                                 dim=1)
                         )
 
@@ -332,17 +346,17 @@ class Trainer(object):
                             (dml_signal / max(1, self.model_num - 1))
                         loss += dml_part
 
-                    # measure accuracy and record loss
+                    # MEASURE ACCURACY AND RECORD LOSS
                     prec_at_1 = accuracy(outputs[i].data,
-                                         true_labels.data, topk=(1,))[0]
+                                         _true_labels.data, topk=(1,))[0]
                     prec_at_5 = accuracy(outputs[i].data,
-                                         true_labels.data, topk=(5,))[0]
+                                         _true_labels.data, topk=(5,))[0]
 
                     accs_at_1[i].update(prec_at_1.item())
                     accs_at_5[i].update(prec_at_5.item())
                     losses[i].update(loss.item())
 
-                    # compute gradients and update SGD
+                    # COMPUTE GRADIENTS AND UPDATE SGD
                     self.optimizers[i].zero_grad()
                     loss.backward()
                     self.optimizers[i].step()
@@ -355,7 +369,7 @@ class Trainer(object):
                     )
                 )
 
-                self.batch_size = images.shape[0]
+                self.batch_size = _images.shape[0]
                 pbar.update(self.batch_size)
 
             metrics = {

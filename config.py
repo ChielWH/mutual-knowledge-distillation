@@ -30,6 +30,8 @@ data_arg.add_argument('--pin_memory', type=str2bool, default=True,
                       help='whether to copy tensors into CUDA pinned memory')
 data_arg.add_argument('--shuffle', type=str2bool, default=True,
                       help='Whether to shuffle the train indices')
+data_arg.add_argument('--download', type=str2bool, default=False,
+                      help='Whether to download the dataset')
 
 
 # training params
@@ -48,8 +50,6 @@ train_arg.add_argument('--nesterov', type=str2bool, default=True,
                        help='Whether to use Nesterov momentum')
 train_arg.add_argument('--lr_patience', type=int, default=10,
                        help='Number of epochs to wait before reducing lr')
-train_arg.add_argument('--train_patience', type=int, default=25,
-                       help='Number of epochs to wait before stopping train')
 train_arg.add_argument('--gamma', type=float, default=0.1,
                        help='value of learning rate decay')
 train_arg.add_argument('--lr_step', type=int, default=60,
@@ -71,7 +71,7 @@ misc_arg.add_argument('--random_seed', type=int, default=1,
                       help='Seed to ensure reproducibility')
 misc_arg.add_argument('--data_dir', type=str, default='./data/cifar100',
                       help='Directory in which data is stored')
-misc_arg.add_argument('--use_wand', type=str2bool, default=False,
+misc_arg.add_argument('--use_wandb', type=str2bool, default=False,
                       help='Whether to use Weights and Biases for visualization')
 misc_arg.add_argument('--resume', type=str2bool, default=False,
                       help='Whether to resume training from checkpoint')
@@ -83,7 +83,8 @@ misc_arg.add_argument('--model_names', nargs='+', default=['RN14', 'MN20', 'EFB0
                       help='The abbreviation of the model name with size indicator',
                       choices=['EFB0', 'EFB1', 'EFB2', 'EFB3', 'EFB4', 'EFB5', 'EFB6', 'EFB7',
                                'MN20', 'MN30', 'MN40', 'MN50', 'MN60', 'MN70', 'MN85', 'MN100',
-                               'RN14', 'RN20', 'RN32', 'RN44', 'RN52', 'RN110', 'RN200', 'RN302'])
+                               'RN14', 'RN20', 'RN32', 'RN44', 'RN50', 'RN110', 'RN200', 'RN302',
+                               'CN2', 'CN4', 'CN6', 'CN28', 'CN10'])
 
 
 def get_config():

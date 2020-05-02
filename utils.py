@@ -1,6 +1,7 @@
 import os
-import json
+import yaml
 import torch
+import itertools
 import numpy as np
 from collections import Counter, defaultdict
 from model_factories import (
@@ -143,15 +144,16 @@ def prepare_dirs(config, return_dir=True):
 
 
 def save_config(config):
-    model_name = config.save_name
-    filename = model_name + '_params.json'
-    param_path = os.path.join(config.ckpt_dir, filename)
-
-    print("[*] Model Checkpoint Dir: {}".format(config.ckpt_dir))
-    print("[*] Param Path: {}".format(param_path))
-
-    with open(param_path, 'w') as fp:
-        json.dump(config.__dict__, fp, indent=4, sort_keys=True)
+    experiment_dir = prepare_dirs(config)
+    if config.use_wandb:
+        import wandb
+        print(
+            f'[*] Config file is stored in ./{wandb.run.dir}/config.yaml')
+    else:
+        param_path = os.path.join(experiment_dir, 'config_params.yaml')
+        with open(param_path, 'w') as fp:
+            yaml.dump(config.__dict__, fp)
+        print(f'[*] Saved config file to ./{param_path}')
 
 
 def print_epoch_stats(model_names, train_losses, train_accs, valid_losses, valid_accs):
@@ -250,7 +252,7 @@ def infer_model_desc(model_name):
     return architecture, size_indicator
 
 
-def load_teachers(config, use_gpu, input_size):
+def load_teachers(config, devices, input_size):
     level = config.experiment_level
     if level < 1:
         raise ValueError('experiment_level must be an integer of 1 or higher')
@@ -264,48 +266,43 @@ def load_teachers(config, use_gpu, input_size):
         ckpts = os.listdir(prev_dir_name)
         bests = list(sorted([path for path in ckpts if 'best' in path]))
         teachers = []
-        for f_name in bests:
+        model_names = [f_name.split('_')[1] for f_name in bests]
+        models = model_init_and_placement(
+            model_names,
+            devices,
+            input_size,
+            config.num_classes
+        )
+        for i, f_name in enumerate(bests):
             state_dict = torch.load(prev_dir_name + f_name)
-            model_name = f_name.split('_')[1]
-            model = model_init(
-                model_name, use_gpu, input_size, config.num_classes)
+            model = models[i]
             model.load_state_dict(state_dict['model_state'])
             teachers.append(model)
     return teachers
 
 
-def model_init(model_name, use_gpu, input_size, num_classes):
-    model_architecture = model_name[:2]
+def model_init_and_placement(model_names, devices, input_size, num_classes):
+    model_architectures = [model_name[:2] for model_name in model_names]
+    size_indicators = [model_name[2:] for model_name in model_names]
+    for model_architecture in model_architectures:
+        assert model_architecture in {'EF', 'MN', 'RN', 'CN'}, \
+            "Model architecture abbreviation must be in [EF, MN, RN, CN]"
+    nets = []
+    for model_architecture, size_indicator, device in zip(model_architectures, size_indicators, itertools.cycle(devices)):
+        if model_architecture == 'EF':
+            net = efficientnet_factory.create_model(size_indicator)
+            correct_out_features(net, num_classes)
+        elif model_architecture == 'MN':
+            net = mobilenetv2_factory.create_model(size=size_indicator,
+                                                   input_size=input_size,
+                                                   num_classes=num_classes)
+        elif model_architecture == 'RN':
+            net = resnet_factory.create_model(size_indicator)
+            correct_out_features(net, num_classes)
+        elif model_architecture == 'CN':
+            net = plain_cnn_factory.create_model(
+                size_indicator, input_size, num_classes)
 
-    assert model_architecture in {'EF', 'MN', 'RN', 'CN'}, \
-        "Model architecture abbreviation must be in [EF, MN, RN, CN]"
-
-    size_indicator = model_name[2:]
-    if model_architecture == 'EF':
-        net = efficientnet_factory.create_model(size_indicator)
-        correct_out_features(net, num_classes)
-    elif model_architecture == 'MN':
-        net = mobilenetv2_factory.create_model(size=size_indicator,
-                                               input_size=input_size,
-                                               num_classes=num_classes)
-    elif model_architecture == 'RN':
-        net = resnet_factory.create_model(size_indicator)
-        correct_out_features(net, num_classes)
-    elif model_architecture == 'CN':
-        net = plain_cnn_factory.create_model(
-            size_indicator, input_size, num_classes)
-    if use_gpu:
-        net.cuda()
-    return net
-
-
-if __name__ == '__main__':
-    use_gpu, input_size, num_classes = False, 40, 100
-    model_init('EFB6', use_gpu=use_gpu,
-               input_size=input_size, num_classes=num_classes)
-    model_init('RN302', use_gpu=use_gpu,
-               input_size=input_size, num_classes=num_classes)
-    model_init('MN35', use_gpu=use_gpu,
-               input_size=input_size, num_classes=num_classes)
-    model_init('CN10', use_gpu=use_gpu,
-               input_size=input_size, num_classes=num_classes)
+        net.to(device)
+        nets.append(net)
+    return nets

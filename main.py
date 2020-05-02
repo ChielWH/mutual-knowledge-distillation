@@ -1,10 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Sun Jul 28 11:07:46 2019
-
-@author: chxy
-"""
-
 import torch
 
 from trainer import Trainer
@@ -19,13 +12,16 @@ def main(config):
     kwargs = {}
     if not config.disable_cuda and torch.cuda.is_available():
         use_gpu = True
+        devices = [f'cuda:{i}' for i in range(
+            torch.cuda.device_count())]
         torch.cuda.manual_seed_all(config.random_seed)
         kwargs = {'num_workers': config.num_workers,
                   'pin_memory': config.pin_memory}
     else:
         use_gpu = False
+        devices = ['cpu']
 
-    teachers = load_teachers(config, use_gpu, 40)
+    teachers = load_teachers(config, devices, 40)
 
     # instantiate data loaders
     test_data_loader = get_test_loader(data_dir=config.data_dir,
@@ -35,6 +31,7 @@ def main(config):
                                        cuda=use_gpu,
                                        teachers=teachers,
                                        model_num=len(config.model_names),
+                                       download=config.download,
                                        **kwargs)
 
     if config.is_train:
