@@ -87,7 +87,6 @@ class PsuedoLabelledDataset(torch.utils.data.Dataset):
                                 tuple([image, label, psuedo_label]))
                         pbar.update(batch_size)
 
-        # else,
         else:
             with tqdm(total=len(data_loader) * batch_size) as pbar:
                 pbar.set_description(

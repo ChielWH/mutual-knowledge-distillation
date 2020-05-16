@@ -187,7 +187,8 @@ class MobileNet2(nn.Module):
 
 
 def create_model(size, input_size, num_classes):
-    return MobileNet2(scale=float(f'0.{size}'),
+    size = int(size) / 100
+    return MobileNet2(scale=size,
                       input_size=input_size,
                       num_classes=num_classes)
 
@@ -221,3 +222,4 @@ if __name__ == "__main__":
     model2 = MobileNet2(scale=0.5)
     model2 = MobileNet2(scale=0.75)
     model2 = MobileNet2(scale=1)
+    model2 = MobileNet2(scale=3)

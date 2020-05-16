@@ -1,5 +1,6 @@
 data/*
 experiments/*
+run_scripts/*
 *wandb/
 !*/README.md
 *.ipynb*

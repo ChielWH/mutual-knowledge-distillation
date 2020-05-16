@@ -1,0 +1,8 @@
+numpy==1.18.1
+wandb==0.8.30
+torchvision==0.5.0
+torch==1.4.0
+efficientnet_pytorch==0.6.3
+tqdm==4.42.1
+Pillow==7.1.2
+PyYAML==5.3.1
