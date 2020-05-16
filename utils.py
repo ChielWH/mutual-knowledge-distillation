@@ -241,7 +241,7 @@ def infer_model_desc(model_name):
                  'CN': 'VGG like CNN'
                  }
     mn_size_dict = {
-        str(size): f'scale={int(size)/100}' for size in range(10, 255, 5)}
+        str(size): f'scale={int(size)/100}' for size in range(10, 305, 5)}
 
     arch = model_name[:2]
     architecture = name_dict[arch]
@@ -267,7 +267,8 @@ def load_teachers(config, devices, input_size):
         bests = list(sorted([path for path in ckpts if 'best' in path]))
         teachers = []
         model_names = [f_name.split('_')[1] for f_name in bests]
-        assert len(model_names) == len(config.model_names), f"Can not find all model checkpoints, found {model_names} to teach {config.model_names}"
+        assert len(model_names) == len(
+            config.model_names), f"Can not find all model checkpoints, found {model_names} to teach {config.model_names}"
         models = model_init_and_placement(
             model_names,
             devices,
@@ -289,7 +290,7 @@ def model_init_and_placement(model_names, devices, input_size, num_classes):
         assert model_architecture in {'EF', 'MN', 'RN', 'CN'}, \
             "Model architecture abbreviation must be in [EF, MN, RN, CN]"
     nets = []
-    for model_architecture, size_indicator, device in zip(model_architectures, size_indicators, itertools.cycle(devices)):
+    for model_architecture, size_indicator, device in zip(model_architectures, size_indicators, devices):
         if model_architecture == 'EF':
             net = efficientnet_factory.create_model(size_indicator)
             correct_out_features(net, num_classes)
@@ -307,3 +308,16 @@ def model_init_and_placement(model_names, devices, input_size, num_classes):
         net.to(device)
         nets.append(net)
     return nets
+
+
+def get_devices(model_num, use_gpu):
+    if use_gpu:
+        # collect all possible gpu's
+        devices = [f'cuda:{i}' for i in range(torch.cuda.device_count())]
+        # duplicate the list of devices to get at least enough devices
+        devices = devices * model_num
+        # take a slice of length model_num
+        devices = devices[:model_num]
+    else:
+        devices = ['cpu'] * model_num
+    return devices
