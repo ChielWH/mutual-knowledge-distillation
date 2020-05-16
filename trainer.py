@@ -11,8 +11,6 @@ import wandb
 import utils
 from utils import accuracy, RunningAverageMeter, MovingAverageMeter
 
-# from tensorboard_logger import configure, log_value
-
 if utils.isnotebook():
     from tqdm.notebook import tqdm
 else:
@@ -72,13 +70,12 @@ class Trainer(object):
         self.temperature = config.temperature
 
         # MISCELLANEOUS PARAMS
+        self.model_num = len(config.model_names)
         if not config.disable_cuda and torch.cuda.is_available():
-            self.devices = [f'cuda:{i}' for i in range(
-                torch.cuda.device_count())]
             self.use_gpu = True
         else:
-            self.devices = ['cpu']
             self.use_gpu = False
+        self.devices = utils.get_devices(self.model_num, self.use_gpu)
         self.best = config.best
         self.counter = 0
         self.lr_patience = config.lr_patience
@@ -86,6 +83,7 @@ class Trainer(object):
         self.experiment_name = config.experiment_name.lower().replace(' ', '_')
         self.experiment_level = config.experiment_level
         self.resume = config.resume
+        self.progress_bar = config.progress_bar
 
         # MODEL SPECIFIC PARAMS
         self.model_names = config.model_names
@@ -96,7 +94,6 @@ class Trainer(object):
             self.num_classes)
         self.indexed_model_names = [
             f'({i})_{model_name}' for i, model_name in enumerate(self.model_names, 1)]
-        self.model_num = len(self.model_names)
 
         # LIST AND FUNC INITIALIZATIONS
         self.optimizers = []
@@ -197,12 +194,12 @@ class Trainer(object):
             )
 
             # train for 1 epoch
-            train_metrics = self.train_one_epoch(
-                epoch)
+            # train_metrics = self.train_one_epoch(epoch)
+            train_metrics = self.one_iteration(train_mode=True)
 
             # evaluate on validation set
-            valid_metrics = self.validate(
-                epoch)
+            # valid_metrics = self.validate(epoch)
+            valid_metrics = self.one_iteration(train_mode=False)
 
             # print the epoch stats to the console
             utils.print_epoch_stats(
@@ -241,6 +238,170 @@ class Trainer(object):
 
             for scheduler in self.schedulers:
                 scheduler.step()
+
+    def one_iteration(self, train_mode):
+        if train_mode:
+            AverageMeter = MovingAverageMeter
+            data_loader = self.train_loader
+        else:
+            AverageMeter = RunningAverageMeter
+            data_loader = self.valid_loader
+
+        losses = []
+        accs_at_1 = []
+        accs_at_5 = []
+        if self.sl_condition:
+            sl_signals = []
+        if self.kd_condition:
+            kd_signals = []
+        if self.dml_condition:
+            dml_signals = []
+
+
+        for net in self.nets:
+            if train_mode:
+                net.train()
+            else:
+                net.eval()
+            losses.append(AverageMeter())
+            accs_at_1.append(AverageMeter())
+            accs_at_5.append(AverageMeter())
+            if self.sl_condition:
+                sl_signals.append(AverageMeter())
+            if self.kd_condition:
+                kd_signals.append(AverageMeter())
+            if self.dml_condition:
+                dml_signals.append(AverageMeter())
+
+        if train_mode and self.progress_bar:
+            pbar = tqdm(total=self.num_train)
+
+        for batch_i, batch in enumerate(data_loader):
+
+            # unpack batch
+            _images, _true_labels, _psuedo_labels = batch
+
+            # place the data to the possibly multiple devices
+            images, true_labels, psuedo_labels = [], [], []
+            for i, device in zip(range(self.model_num), self.devices):
+                images.append(
+                    Variable(_images.clone().to(device)))
+                true_labels.append(
+                    Variable(_true_labels.clone().to(device)))
+                psuedo_labels.append(
+                    _psuedo_labels[:, :, i].to(device))
+
+            # forward pass
+            outputs = []
+            for i, net in enumerate(self.nets):
+                if not train_mode:
+                    with torch.no_grad():
+                        outputs.append(net(images[i]))
+                else:
+                    outputs.append(net(images[i]))
+
+            # CALCULATE AGGREGATED LOSSES AND UPDATE PARAMETERS
+            for i in range(self.model_num):
+                # supervised learning signal
+                sl_signal = self.loss_ce(outputs[i], true_labels[i])
+
+                # update the signal for logging
+                if self.sl_condition:
+                    sl_signals[i].update(sl_signal)
+
+                # initialize the overall loss
+                sl_part = (1 - self.lambda_a) * sl_signal
+                loss = sl_part
+
+                # knowledge distillation signal
+                if self.kd_condition:
+                    kd_signal = nn.KLDivLoss()(
+                        F.log_softmax(
+                            outputs[i] / self.temperature,
+                            dim=1),
+                        F.softmax(
+                            psuedo_labels[i] / self.temperature,
+                            dim=1)
+                    )
+
+                    # update the signal for logging
+                    kd_signals[i].update(kd_signal)
+
+                    # add kd signal to the overall loss
+                    kd_part = (1 - self.lambda_b) * self.lambda_a * \
+                        self.temperature * self.temperature * kd_signal
+                    loss += kd_part
+
+                # deep mutual learning signal
+                if self.dml_condition:
+                    p_i = outputs[i]
+                    dml_signal = 0
+                    for j in range(self.model_num):
+                        if i != j:
+                            p_j = outputs[j]
+                            if len(self.devices) > 1:
+                                p_j = p_j.clone().to(self.devices[i])
+                            dml_signal += self.loss_kl(
+                                F.log_softmax(p_i, dim=1),
+                                F.softmax(Variable(p_j), dim=1)
+                            )
+
+                    # update the signal for logging
+                    dml_signals[i].update(dml_signal)
+
+                    # add dml signal to the overall loss
+                    dml_part = self.lambda_b * \
+                        (dml_signal / max(1, self.model_num - 1))
+                    loss += dml_part
+
+                # COMPUTE GRADIENTS AND UPDATE SGD
+                if train_mode:
+                    self.optimizers[i].zero_grad()
+                    loss.backward()
+                    self.optimizers[i].step()
+
+                # MEASURE ACCURACY AND RECORD LOSS
+                preds = outputs[i].clone().to('cpu').data
+                prec_at_1 = accuracy(
+                    preds,
+                    _true_labels.data,
+                    topk=(1,))[0]
+                prec_at_5 = accuracy(
+                    preds,
+                    _true_labels.data,
+                    topk=(5,))[0]
+
+                accs_at_1[i].update(prec_at_1.item())
+                accs_at_5[i].update(prec_at_5.item())
+                losses[i].update(loss.item())
+
+            # update progressbar
+            if train_mode and self.progress_bar:
+                pbar.set_description(
+                    "Average loss: {:.3f}, average acc: {:.3f}".format(
+                        sum([l.avg for l in losses]) / len(losses),
+                        sum([a.avg for a in accs_at_1]) / len(accs_at_1)
+                    )
+                )
+                batch_size = _images.shape[0]
+                pbar.update(batch_size)
+
+        mode = 'train' if train_mode else 'valid'
+        metrics = {
+            f'{mode} loss': losses,
+            f'{mode} acc @ 1': accs_at_1,
+            f'{mode} acc @ 5': accs_at_5
+        }
+        if self.sl_condition:
+            metrics[f'{mode} sl signal'] = sl_signals
+
+        if self.kd_condition:
+            metrics[f'{mode} kd signal'] = kd_signals
+
+        if self.dml_condition:
+            metrics[f'{mode} dml signal'] = dml_signals
+
+        return metrics
 
     def train_one_epoch(self, epoch):
         """
@@ -330,36 +491,42 @@ class Trainer(object):
 
                     # deep mutual learning signal
                     if self.dml_condition:
+                        p_i = outputs[i]
                         dml_signal = 0
                         for j in range(self.model_num):
                             if i != j:
+                                p_j = outputs[j]
+                                if len(self.devices) > 1:
+                                    p_j = p_j.clone().to(self.devices[i])
                                 dml_signal += self.loss_kl(
-                                    F.log_softmax(outputs[i], dim=1),
-                                    F.softmax(Variable(outputs[j]), dim=1)
+                                    F.log_softmax(p_i, dim=1),
+                                    F.softmax(Variable(p_j), dim=1)
                                 )
 
                         # update the signal for logging
                         dml_signals[i].update(dml_signal)
 
                         # add dml signal to the overall loss
-                        dml_part = self.lambda_b * \
+                        dml_part=self.lambda_b * \
                             (dml_signal / max(1, self.model_num - 1))
                         loss += dml_part
-
-                    # MEASURE ACCURACY AND RECORD LOSS
-                    prec_at_1 = accuracy(outputs[i].data,
-                                         _true_labels.data, topk=(1,))[0]
-                    prec_at_5 = accuracy(outputs[i].data,
-                                         _true_labels.data, topk=(5,))[0]
-
-                    accs_at_1[i].update(prec_at_1.item())
-                    accs_at_5[i].update(prec_at_5.item())
-                    losses[i].update(loss.item())
 
                     # COMPUTE GRADIENTS AND UPDATE SGD
                     self.optimizers[i].zero_grad()
                     loss.backward()
                     self.optimizers[i].step()
+
+
+                    # MEASURE ACCURACY AND RECORD LOSS
+                    preds = outputs[i].clone().to('cpu').data
+                    prec_at_1=accuracy(preds,
+                                         _true_labels.data, topk = (1,))[0]
+                    prec_at_5=accuracy(preds,
+                                         _true_labels.data, topk = (5,))[0]
+
+                    accs_at_1[i].update(prec_at_1.item())
+                    accs_at_5[i].update(prec_at_5.item())
+                    losses[i].update(loss.item())
 
                 # update progressbar
                 pbar.set_description(
@@ -369,10 +536,10 @@ class Trainer(object):
                     )
                 )
 
-                self.batch_size = _images.shape[0]
-                pbar.update(self.batch_size)
+                batch_size=_images.shape[0]
+                pbar.update(batch_size)
 
-            metrics = {
+            metrics={
                 'train loss': losses,
                 'train acc @ 1': accs_at_1,
                 'train acc @ 5': accs_at_5
@@ -404,15 +571,15 @@ class Trainer(object):
 
         for net in self.nets:
             net.train()
-            losses.append(MovingAverageMeter())
-            accs_at_1.append(MovingAverageMeter())
-            accs_at_5.append(MovingAverageMeter())
+            losses.append(RunningAverageMeter())
+            accs_at_1.append(RunningAverageMeter())
+            accs_at_5.append(RunningAverageMeter())
             if self.sl_condition:
-                sl_signals.append(MovingAverageMeter())
+                sl_signals.append(RunningAverageMeter())
             if self.kd_condition:
-                kd_signals.append(MovingAverageMeter())
+                kd_signals.append(RunningAverageMeter())
             if self.dml_condition:
-                dml_signals.append(MovingAverageMeter())
+                dml_signals.append(RunningAverageMeter())
 
         for i, batch in enumerate(self.valid_loader):
             images, true_labels, psuedo_labels = batch
@@ -555,8 +722,10 @@ class Trainer(object):
         )
         torch.save(state, ckpt_path)
         if use_wandb:  # currently getting symlink errors (on Colab)
-            # wandb.save(ckpt_path)
-            pass
+            try:
+                wandb.save(path)
+            except:
+                pass
 
         if is_best:
             path = os.path.join(
@@ -566,5 +735,7 @@ class Trainer(object):
             )
             shutil.copyfile(ckpt_path, path)
             if use_wandb:
-                # wandb.save(path)
-                pass
+                try:
+                    wandb.save(path)
+                except:
+                    pass
