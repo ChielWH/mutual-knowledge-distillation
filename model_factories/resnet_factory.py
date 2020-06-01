@@ -121,11 +121,11 @@ class ResNet(nn.Module):
         return out
 
 
-def create_model(size):
+def create_model(size, num_classes):
     # maximum of resnet302
     sizes = {str((6 * num_blocks) + 2): [num_blocks] * 3 for num_blocks in range(1, 51)}
     assert size in sizes.keys(), 'ResNet size must by in the table of (i*6) + 2'
-    return ResNet(BasicBlock, sizes[size])
+    return ResNet(BasicBlock, sizes[size], num_classes)
 
 # pre-built
 
