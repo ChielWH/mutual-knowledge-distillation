@@ -1,5 +1,4 @@
 from collections import OrderedDict
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -106,7 +105,7 @@ class MobileNet2(nn.Module):
         self.conv_last = nn.Conv2d(
             self.c[-1], self.last_conv_out_ch, kernel_size=1, bias=False)
         self.bn_last = nn.BatchNorm2d(self.last_conv_out_ch)
-        if input_size > 126:
+        if input_size > 60:
             self.avgpool = nn.AvgPool2d(kernel_size=7)
         else:
             self.avgpool = nn.AvgPool2d(kernel_size=4)
@@ -183,7 +182,7 @@ class MobileNet2(nn.Module):
         # flatten for input to fully-connected layer
         x = x.view(x.size(0), -1)
         x = self.fc(x)
-        return F.log_softmax(x, dim=1)  # TODO not needed(?)
+        return F.log_softmax(x, dim=1)
 
 
 def create_model(size, input_size, num_classes):
@@ -196,30 +195,20 @@ def create_model(size, input_size, num_classes):
 if __name__ == "__main__":
     """Testing
     """
-    model1 = MobileNet2()
-    print(model1)
-    model2 = MobileNet2(scale=0.35)
-    print(model2)
-    model3 = MobileNet2(num_classes=10)
-    print(model3)
-    x = torch.randn(1, 3, 224, 224)
-    print(model3(x))
-    model4_size = 32 * 10
-    model4 = MobileNet2(input_size=model4_size, num_classes=10)
-    print(model4)
-    x2 = torch.randn(1, 3, model4_size, model4_size)
-    print(model4(x2))
-    model5 = MobileNet2(input_size=196, num_classes=10)
-    x3 = torch.randn(1, 3, 196, 196)
-    print(model5(x3))  # fail
-    model6 = MobileNet2(input_size=36, num_classes=10)
-    x3 = torch.randn(1, 3, 36, 36)
-    print(model6)
-    print(model6(x3))
-    model2 = MobileNet2(scale=0.1)
-    model2 = MobileNet2(scale=0.25)
-    model2 = MobileNet2(scale=0.35)
-    model2 = MobileNet2(scale=0.5)
-    model2 = MobileNet2(scale=0.75)
-    model2 = MobileNet2(scale=1)
-    model2 = MobileNet2(scale=3)
+
+    for input_size in [224, 64, 32]:
+        x = torch.randn(1, 3, input_size, input_size)
+
+        model1 = MobileNet2(scale=0.2, input_size=input_size)
+        model1(x)
+
+        model2 = MobileNet2(scale=0.5, input_size=input_size)
+        model2(x)
+
+        model3 = MobileNet2(scale=1, input_size=input_size)
+        model3(x)
+
+        model4 = MobileNet2(scale=3, input_size=input_size)
+        model4(x)
+
+        print(f'Passed for input_size {input_size}')
