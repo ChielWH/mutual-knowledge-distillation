@@ -9,55 +9,62 @@ from tqdm import tqdm
 
 # heavily based on https://github.com/tjmoon0104/pytorch-tiny-imagenet
 
-os.chdir('data')
 
-# download and unzip the dataset
-subprocess.call('wget -nc http://cs231n.stanford.edu/tiny-imagenet-200.zip;\
-                unzip tiny-imagenet-200.zip;\
-                rm -r ./tiny-imagenet-200/test',
-                shell=True)
+def run():
+    os.chdir('data')
 
-target_folder = './tiny-imagenet-200/val/'
-test_folder = './tiny-imagenet-200/test/'
+    # download and unzip the dataset
+    subprocess.call('wget -nc http://cs231n.stanford.edu/tiny-imagenet-200.zip;\
+                    unzip tiny-imagenet-200.zip;\
+                    rm -r ./tiny-imagenet-200/test',
+                    shell=True)
 
-# storing the filename - label pairs
-os.mkdir(test_folder)
-val_dict = {}
-with open('./tiny-imagenet-200/val/val_annotations.txt', 'r') as f:
-    for line in f.readlines():
-        split_line = line.split('\t')
-        val_dict[split_line[0]] = split_line[1]
+    target_folder = './tiny-imagenet-200/val/'
+    test_folder = './tiny-imagenet-200/test/'
 
-# structure the folders in the right format for PyTorch according their labels
-paths = glob.glob('./tiny-imagenet-200/val/images/*')
-for path in paths:
-    file = path.split('/')[-1]
-    folder = val_dict[file]
-    if not os.path.exists(target_folder + str(folder)):
-        os.mkdir(target_folder + str(folder))
-        os.mkdir(target_folder + str(folder) + '/images')
-    if not os.path.exists(test_folder + str(folder)):
-        os.mkdir(test_folder + str(folder))
-        os.mkdir(test_folder + str(folder) + '/images')
+    # storing the filename - label pairs
+    os.mkdir(test_folder)
+    val_dict = {}
+    with open('./tiny-imagenet-200/val/val_annotations.txt', 'r') as f:
+        for line in f.readlines():
+            split_line = line.split('\t')
+            val_dict[split_line[0]] = split_line[1]
 
-for path in paths:
-    file = path.split('/')[-1]
-    folder = val_dict[file]
-    if len(glob.glob(target_folder + str(folder) + '/images/*')) < 25:
-        dest = target_folder + str(folder) + '/images/' + str(file)
-    else:
-        dest = test_folder + str(folder) + '/images/' + str(file)
-    shutil.move(path, dest)
+    # structure the folders in the right format for PyTorch according their labels
+    paths = glob.glob('./tiny-imagenet-200/val/images/*')
+    for path in paths:
+        file = path.split('/')[-1]
+        folder = val_dict[file]
+        if not os.path.exists(target_folder + str(folder)):
+            os.mkdir(target_folder + str(folder))
+            os.mkdir(target_folder + str(folder) + '/images')
+        if not os.path.exists(test_folder + str(folder)):
+            os.mkdir(test_folder + str(folder))
+            os.mkdir(test_folder + str(folder) + '/images')
 
-os.remove('tiny-imagenet-200.zip')
-os.rmdir('./tiny-imagenet-200/val/images')
+    for path in paths:
+        file = path.split('/')[-1]
+        folder = val_dict[file]
+        if len(glob.glob(target_folder + str(folder) + '/images/*')) < 25:
+            dest = target_folder + str(folder) + '/images/' + str(file)
+        else:
+            dest = test_folder + str(folder) + '/images/' + str(file)
+        shutil.move(path, dest)
 
-# removing the .txt files containing the bounding boxes
-for root, dirnames, filenames in os.walk('tiny-imagenet-200'):
-    for filename in fnmatch.filter(filenames, '*.txt'):
-        os.remove(os.path.join(root, filename))
+    os.remove('tiny-imagenet-200.zip')
+    os.rmdir('./tiny-imagenet-200/val/images')
+
+    # removing the .txt files containing the bounding boxes
+    for root, dirnames, filenames in os.walk('tiny-imagenet-200'):
+        for filename in fnmatch.filter(filenames, '*.txt'):
+            os.remove(os.path.join(root, filename))
+
+
+if __name__ == '__main__':
+    run()
 
 # resizing the images from 200*200 to 224*224
+# print('Copy all images to ./tiny-imagenet-224')
 # shutil.copytree('tiny-imagenet-200', 'tiny-imagenet-224')
 # all_images = glob.glob('tiny-imagenet-224/*/*/*/*')
 
