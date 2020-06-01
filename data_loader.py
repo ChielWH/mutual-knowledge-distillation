@@ -18,59 +18,33 @@ class PsuedoLabelledDataset(torch.utils.data.Dataset):
     """Psuedo labelled dataset."""
 
     def __init__(self,
-                 data_dir,
+                 data_loader,
+                 num_classes,
                  trans,
-                 pad,
-                 pad_mode,
                  batch_size,
                  train,
                  model_num,
-                 cifar='100',
-                 download=False,
                  teachers=[],
                  cuda=False):
-        """
-        """
+
         self.named_dataset = []
         self.teacher_num = len(teachers)
 
         device = torch.device('cuda') if cuda else torch.device('cpu')
-        padding = [pad] * 4
 
-        # get the correct CIFAR dataset
-        cifar_dataset = getattr(datasets, f'CIFAR{cifar}')
-        dataset = cifar_dataset(root=data_dir,
-                                transform=trans,
-                                download=download,
-                                train=train)
-        data_loader = torch.utils.data.DataLoader(
-            dataset, batch_size=batch_size)
-
-        # get the fold by inspecting the function that instantiates the class
-        caller = inspect.stack()[1][3]
-        fold = 'train' if caller == 'get_train_loader' else 'test'
         if teachers:
             # prepare and assert the teachers behaviour
             sample_images = next(iter(data_loader))[0].to(device)
-            sample_images = F.pad(input=sample_images,
-                                  pad=padding,
-                                  mode=pad_mode)
             for teacher in teachers:
                 teacher = teacher.to(device)
                 teacher.eval()
-                assert teacher(sample_images).shape == (batch_size, int(cifar))
+                assert teacher(sample_images).shape == (
+                    batch_size, num_classes)
 
             # create the psuedo labels
-            with tqdm(total=len(data_loader) * batch_size) as pbar:
-                pbar.set_description(
-                    f'Preparing {fold}set: creating the psuedo labels')
+            with tqdm(total=len(data_loader)) as pbar:
                 with torch.no_grad():
                     for images, labels in data_loader:
-                        images = F.pad(
-                            input=images,
-                            pad=padding,
-                            mode=pad_mode
-                        )
                         if cuda:
                             images = images.to(device)
                         psuedo_labels = torch.stack(
@@ -85,23 +59,16 @@ class PsuedoLabelledDataset(torch.utils.data.Dataset):
                                                               psuedo_labels):
                             self.named_dataset.append(
                                 tuple([image, label, psuedo_label]))
-                        pbar.update(batch_size)
+                        pbar.update(1)
 
         else:
-            with tqdm(total=len(data_loader) * batch_size) as pbar:
-                pbar.set_description(
-                    f'Preparing {fold}set')
-                dummy_psuedo_label = torch.empty(int(cifar), model_num)
+            with tqdm(total=len(data_loader)) as pbar:
+                dummy_psuedo_label = torch.empty(num_classes, model_num)
                 for images, labels in data_loader:
-                    images = F.pad(
-                        input=images,
-                        pad=padding,
-                        mode=pad_mode
-                    )
                     for image, label in zip(images, labels):
                         self.named_dataset.append(
                             tuple([image, label, dummy_psuedo_label]))
-                    pbar.update(batch_size)
+                    pbar.update(1)
 
     def __len__(self):
         return len(self.named_dataset)
@@ -110,13 +77,13 @@ class PsuedoLabelledDataset(torch.utils.data.Dataset):
         return self.named_dataset[idx]
 
 
-def get_train_loader(data_dir,
+def get_train_loader(data_loader,
                      batch_size,
-                     pad,
-                     pad_mode,
-                     model_num,
-                     cifar='100',
-                     download=False,
+                     img_size,
+                     padding,
+                     padding_mode,
+                     num_classes,
+                     model_num=3,
                      teachers=[],
                      cuda=False,
                      random_seed=2020,
@@ -137,22 +104,23 @@ def get_train_loader(data_dir,
     """
     # define transforms
     trans = transforms.Compose([
-        transforms.RandomCrop(32, padding=4),
+        transforms.RandomCrop(
+            size=img_size - padding,
+            padding=padding,
+            padding_mode=padding_mode),
         transforms.RandomHorizontalFlip(),
         transforms.RandomRotation(degrees=15),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ])
 
-    dataset = PsuedoLabelledDataset(data_dir=data_dir,
+    print('Preparing the training loader...')
+    dataset = PsuedoLabelledDataset(data_loader=data_loader,
                                     trans=trans,
-                                    pad=pad,
-                                    pad_mode=pad_mode,
                                     batch_size=batch_size,
-                                    cifar=cifar,
-                                    download=download,
                                     train=True,
                                     model_num=model_num,
+                                    num_classes=num_classes,
                                     teachers=teachers,
                                     cuda=cuda)
 
@@ -168,14 +136,12 @@ def get_train_loader(data_dir,
     return data_laoder
 
 
-def get_test_loader(data_dir,
+def get_test_loader(data_loader,
                     batch_size,
-                    pad,
-                    pad_mode,
-                    model_num,
-                    cifar='100',
-                    download=False,
+                    img_size,
+                    num_classes,
                     teachers=[],
+                    model_num=3,
                     cuda=False,
                     random_seed=2020,
                     shuffle=True,
@@ -203,16 +169,13 @@ def get_test_loader(data_dir,
                              0.229, 0.224, 0.225])
     ])
 
-    # load dataset
-    dataset = PsuedoLabelledDataset(data_dir=data_dir,
+    print('Preparing the testing loader...')
+    dataset = PsuedoLabelledDataset(data_loader=data_loader,
                                     trans=trans,
-                                    pad=pad,
-                                    pad_mode=pad_mode,
                                     batch_size=batch_size,
-                                    cifar=cifar,
-                                    download=download,
                                     train=False,
                                     model_num=model_num,
+                                    num_classes=num_classes,
                                     teachers=teachers,
                                     cuda=cuda)
 

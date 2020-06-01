@@ -5,33 +5,33 @@ parser = argparse.ArgumentParser(description='Mutual Knowledge Distillation')
 
 
 def str2bool(v):
-  return v.lower() in ('true', '1')
+    return v.lower() in {'true', '1'}
 
 
 def add_argument_group(name):
-  arg = parser.add_argument_group(name)
-  arg_lists.append(arg)
-  return arg
+    arg = parser.add_argument_group(name)
+    arg_lists.append(arg)
+    return arg
 
 
 # data params
 data_arg = add_argument_group('Data Params')
-data_arg.add_argument('--num_classes', type=int, default=100,
-                      help='Number of classes to classify')
+data_arg.add_argument('--dataset', type=str, default='cifar100',
+                      help='The set of images used to train, validate and test the model',
+                      choices=['cifar10', 'cifar100', 'tiny-imagenet-200'])
 data_arg.add_argument('--batch_size', type=int, default=64,
                       help='# of images in each batch of data')
 data_arg.add_argument('--padding', type=int, default=4,
-                      help='number of pixels to pad around the image')
-data_arg.add_argument('--pad_mode', type=str, default='constant',
-                      help='padding mode')
+                      help='number of pixels to pad around the image, see: https://pytorch.org/docs/stable/torchvision/transforms.html -> torchvision.transforms.Pad')
+data_arg.add_argument('--padding_mode', type=str, default='reflect',
+                      help='padding mode (constant is filled with 0),  see: https://pytorch.org/docs/stable/torchvision/transforms.html -> torchvision.transforms.Pad',
+                      choices=['constant', 'reflect', 'edge', 'symmetric'])
 data_arg.add_argument('--num_workers', type=int, default=4,
                       help='# of subprocesses to use for data loading')
 data_arg.add_argument('--pin_memory', type=str2bool, default=True,
                       help='whether to copy tensors into CUDA pinned memory')
 data_arg.add_argument('--shuffle', type=str2bool, default=True,
                       help='Whether to shuffle the train indices')
-data_arg.add_argument('--download', type=str2bool, default=False,
-                      help='Whether to download the dataset')
 
 
 # training params
@@ -90,5 +90,9 @@ misc_arg.add_argument('--model_names', nargs='+', default=['RN14', 'MN20', 'EFB0
 
 
 def get_config():
-  config, unparsed = parser.parse_known_args()
-  return config, unparsed
+    config, unparsed = parser.parse_known_args()
+    return config, unparsed
+
+
+if __name__ == '__main__':
+    get_config()
