@@ -1,19 +1,15 @@
 import os
+import sys
 import yaml
 import torch
-import itertools
 import numpy as np
-from collections import Counter, defaultdict
+from torchvision import datasets, transforms
+from torch.utils.data import DataLoader
 from model_factories import (
     efficientnet_factory,
     mobilenetv2_factory,
     resnet_factory,
     plain_cnn_factory)
-from PIL import Image
-
-
-def denormalize(T, coords):
-    return (0.5 * ((coords + 1.0) * T))
 
 
 class MovingAverageMeter(object):
@@ -69,67 +65,6 @@ def accuracy(output, target, topk=(1,)):
         correct_k = correct[:k].view(-1).float().sum(0)
         res.append(correct_k.mul_(100.0 / batch_size))
     return res
-
-
-def resize_array(x, size):
-    # 3D and 4D tensors allowed only
-    assert x.ndim in [3, 4], "Only 3D and 4D Tensors allowed!"
-
-    # 4D Tensor
-    if x.ndim == 4:
-        res = []
-        for i in range(x.shape[0]):
-            img = array2img(x[i])
-            img = img.resize((size, size))
-            img = np.asarray(img, dtype='float32')
-            img = np.expand_dims(img, axis=0)
-            img /= 255.0
-            res.append(img)
-        res = np.concatenate(res)
-        res = np.expand_dims(res, axis=1)
-        return res
-
-    # 3D Tensor
-    img = array2img(x)
-    img = img.resize((size, size))
-    res = np.asarray(img, dtype='float32')
-    res = np.expand_dims(res, axis=0)
-    res /= 255.0
-    return res
-
-
-def img2array(data_path, desired_size=None, expand=False, view=False):
-    """
-    Util function for loading RGB image into a numpy array.
-
-    Returns array of shape (1, H, W, C).
-    """
-    img = Image.open(data_path)
-    img = img.convert('RGB')
-    if desired_size:
-        img = img.resize((desired_size[1], desired_size[0]))
-    if view:
-        img.show()
-    x = np.asarray(img, dtype='float32')
-    if expand:
-        x = np.expand_dims(x, axis=0)
-    x /= 255.0
-    return x
-
-
-def array2img(x):
-    """
-    Util function for converting anumpy array to a PIL img.
-
-    Returns PIL RGB img.
-    """
-    x = np.asarray(x)
-    x = x + max(-np.min(x), 0)
-    x_max = np.max(x)
-    if x_max != 0:
-        x /= x_max
-    x *= 255
-    return Image.fromarray(x.astype('uint8'), 'RGB')
 
 
 def prepare_dirs(config, return_dir=True):
@@ -202,36 +137,8 @@ def isnotebook():
         return False
 
 
-def correct_out_features(model, out_features):
-    import torch
-    for idx, module in reversed(list(enumerate(model.modules()))):
-        if type(module) == torch.nn.modules.linear.Linear:
-            in_features = module.in_features
-            bias = type(module.bias) == torch.nn.parameter.Parameter
-            setattr(
-                model,
-                list(model.named_modules())[idx][0],
-                torch.nn.Linear(in_features,
-                                out_features,
-                                bias=bias)
-            )
-
-
 def infer_input_size(batch):
     return batch[0].shape[2]
-
-
-def uniquify(model_names):
-    names = []
-    count_state = defaultdict(lambda: 1)
-    counter = Counter(model_names)
-    for model_name in model_names:
-        if counter[model_name] == 1:
-            names.append(model_name)
-        else:
-            names.append(model_name + f'({count_state[model_name]})')
-            count_state[model_name] += 1
-    return names
 
 
 def infer_model_desc(model_name):
@@ -275,7 +182,10 @@ def load_teachers(config, devices, input_size):
             input_size,
             config.num_classes
         )
+        assert len(models) == len(
+            config.model_names), f'{len(models)} != {len(config.model_names)}'
         for i, f_name in enumerate(bests):
+            print(f_name)
             state_dict = torch.load(prev_dir_name + f_name)
             model = models[i]
             model.load_state_dict(state_dict['model_state'])
@@ -283,28 +193,42 @@ def load_teachers(config, devices, input_size):
     return teachers
 
 
+def _correct_out_features(model, out_features):
+    import torch
+    for idx, module in reversed(list(enumerate(model.modules()))):
+        if type(module) == torch.nn.modules.linear.Linear:
+            in_features = module.in_features
+            bias = type(module.bias) == torch.nn.parameter.Parameter
+            setattr(
+                model,
+                list(model.named_modules())[idx][0],
+                torch.nn.Linear(in_features,
+                                out_features,
+                                bias=bias)
+            )
+
+
 def model_init_and_placement(model_names, devices, input_size, num_classes):
     model_architectures = [model_name[:2] for model_name in model_names]
     size_indicators = [model_name[2:] for model_name in model_names]
-    for model_architecture in model_architectures:
-        assert model_architecture in {'EF', 'MN', 'RN', 'CN'}, \
-            "Model architecture abbreviation must be in [EF, MN, RN, CN]"
     nets = []
     for model_architecture, size_indicator, device in zip(model_architectures, size_indicators, devices):
         if model_architecture == 'EF':
             net = efficientnet_factory.create_model(size_indicator)
-            correct_out_features(net, num_classes)
+            _correct_out_features(net, num_classes)
         elif model_architecture == 'MN':
             net = mobilenetv2_factory.create_model(size=size_indicator,
                                                    input_size=input_size,
                                                    num_classes=num_classes)
         elif model_architecture == 'RN':
-            net = resnet_factory.create_model(size_indicator)
-            correct_out_features(net, num_classes)
+            net = resnet_factory.create_model(size_indicator, num_classes)
+            _correct_out_features(net, num_classes)
         elif model_architecture == 'CN':
             net = plain_cnn_factory.create_model(
                 size_indicator, input_size, num_classes)
-
+        else:
+            raise ValuesError(
+                f'Model architecture {model_architecture} not known')
         net.to(device)
         nets.append(net)
     return nets
@@ -321,3 +245,98 @@ def get_devices(model_num, use_gpu):
     else:
         devices = ['cpu'] * model_num
     return devices
+
+
+def get_dataset(name, data_dir, fold):
+    assert name.lower() in {'cifar10', 'cifar100', 'tiny-imagenet-200'}, \
+        "Only 'cifar10', 'cifar100', 'tiny-imagenet-200' are valid names fot he supported datasets"
+
+    assert fold in {'train', 'val', 'test'}
+
+    if not os.path.exists(data_dir):
+        out = input(
+            f'Could not find the data directory {data_dir}, want to create it?\n(yes/no): ')
+        if out.lower() == 'yes':
+            os.makedirs(data_dir)
+        else:
+            sys.exit('Aborting script...')
+
+    if name.lower() == 'cifar10':
+        train = fold == 'train'
+        try:
+            dataset = datasets.CIFAR10(
+                root=data_dir,
+                transform=transforms.ToTensor(),
+                download=False,
+                train=train,
+            )
+
+        except RuntimeError:
+            out = input(
+                'Could not find the dataset, want to downloading it?\n(yes/no')
+            if out.lower() == 'yes':
+                dataset = datasets.CIFAR10(
+                    root=data_dir,
+                    transform=transforms.ToTensor(),
+                    download=True,
+                    train=train
+                )
+
+        data_dict = {
+            'data_loader': DataLoader(dataset),
+            'img_size': 32,
+            'num_classes': 10
+        }
+
+    elif name.lower() == 'cifar100':
+        train = fold == 'train'
+        try:
+            dataset = datasets.CIFAR100(
+                root=data_dir,
+                transform=transforms.ToTensor(),
+                download=False,
+                train=train
+            )
+
+        except RuntimeError:
+            out = input(
+                'Could not find the dataset, want to downloading it?\n(yes/no')
+            if out.lower() == 'yes':
+                dataset = datasets.CIFAR100(
+                    root=data_dir,
+                    transform=transforms.ToTensor(),
+                    download=True,
+                    train=train
+                )
+
+        data_dict = {
+            'data_loader': DataLoader(dataset),
+            'img_size': 32,
+            'num_classes': 100
+        }
+
+    elif name.lower() == 'tiny-imagenet-200':
+        try:
+            dataset = datasets.ImageFolder(
+                data_dir + f'/{fold}', transform=transforms.ToTensor())
+        except FileNotFoundError:
+            out = input(
+                f'Dataset not found at {data_dir}, want to download it?\n(yes/no): ')
+            if out.lower() == 'yes':
+                import tiny_imagenet_download
+                tiny_imagenet_download.run()
+            else:
+                sys.exit(
+                    'Aborting script, provide correct data_dir argument or download the dataset next time to proceed using tiny-imagenet-200.')
+
+        data_dict = {
+            'data_loader': DataLoader(dataset),
+            'img_size': 64,
+            'num_classes': 200
+        }
+
+    else:
+        print("Only 'cifar10', 'cifar100', 'tiny-imagenet-200' are valid names fot he supported datasets")
+        sys.exit('Aborting script...')
+
+    return data_dict
