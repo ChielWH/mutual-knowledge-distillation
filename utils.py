@@ -227,7 +227,7 @@ def model_init_and_placement(model_names, devices, input_size, num_classes):
             net = plain_cnn_factory.create_model(
                 size_indicator, input_size, num_classes)
         else:
-            raise ValuesError(
+            raise ValueError(
                 f'Model architecture {model_architecture} not known')
         net.to(device)
         nets.append(net)
