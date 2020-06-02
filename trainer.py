@@ -6,9 +6,9 @@ from torch.autograd import Variable
 import os
 import shutil
 import warnings
-import itertools
 import wandb
 import utils
+from datetime import datetime
 from utils import accuracy, RunningAverageMeter, MovingAverageMeter
 
 if utils.isnotebook():
@@ -179,25 +179,29 @@ class Trainer(object):
         # load the most recent checkpoint
         # if self.resume:
         #     self.load_checkpoint(best=False)
-
-        print("\n[*] Train on {} samples, validate on {} samples".format(
+        print(
+            "[*] Trainloop started at {}".format(datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+        print("[*] Train on {} samples, validate on {} samples".format(
             self.num_train, self.num_valid)
         )
 
         for epoch in range(self.start_epoch, self.epochs):
 
             print(
-                '\nEpoch: {}/{} - LR: {:.6f}'.format(
+                '\nEpoch: {}/{} - LR: {:.6f} - Current time: {}'.format(
                     epoch + 1,
                     self.epochs,
-                    self.optimizers[0].param_groups[0]['lr'])
+                    self.optimizers[0].param_groups[0]['lr'],
+                    datetime.now().strftime('%H:%M:%S')
+                )
             )
 
             # train for 1 epoch
             train_metrics = self.one_iteration(train_mode=True)
 
             # evaluate on validation set
-            valid_metrics = self.one_iteration(train_mode=False)
+            with torch.no_grad():
+                valid_metrics = self.one_iteration(train_mode=False)
 
             # print the epoch stats to the console
             utils.print_epoch_stats(
@@ -292,11 +296,12 @@ class Trainer(object):
             # forward pass
             outputs = []
             for i, net in enumerate(self.nets):
-                if not train_mode:
-                    with torch.no_grad():
-                        outputs.append(net(images[i]))
-                else:
-                    outputs.append(net(images[i]))
+                # if not train_mode:
+                #     with torch.no_grad():
+                #         outputs.append(net(images[i]))
+                # else:
+                #     outputs.append(net(images[i]))
+                outputs.append(net(images[i]))
 
             # CALCULATE AGGREGATED LOSSES AND UPDATE PARAMETERS
             for i in range(self.model_num):
@@ -455,7 +460,7 @@ class Trainer(object):
         )
         torch.save(state, ckpt_path)
         if use_wandb:  # currently getting symlink errors (on Colab)
-            wandb.run.summary["current valid acc"] = state["current_valid_acc"]
+            # wandb.run.summary["current valid acc"] = state["current_valid_acc"]
             try:
                 wandb.save(ckpt_path)
             except OSError:
@@ -469,7 +474,7 @@ class Trainer(object):
             )
             shutil.copyfile(ckpt_path, path)
             if use_wandb:
-                wandb.run.summary["best valid acc"] = state["best_valid_acc"]
+                # wandb.run.summary["best valid acc"] = state["best_valid_acc"]
                 try:
                     wandb.save(path)
 
