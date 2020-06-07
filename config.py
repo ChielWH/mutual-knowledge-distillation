@@ -1,4 +1,5 @@
 import argparse
+from datetime import datetime
 
 arg_lists = []
 parser = argparse.ArgumentParser(description='Mutual Knowledge Distillation')
@@ -63,6 +64,7 @@ train_arg.add_argument('--temperature', type=float, default=3,
 
 # other params
 misc_arg = add_argument_group('Misc.')
+# misc_arg.add_argument('--test_script', type=str2bool, default=False)
 misc_arg.add_argument('--disable_cuda', type=str2bool, default=False,
                       help="Whether disable the GPU, if False, GPU will be utilized if available")
 misc_arg.add_argument('--best', type=str2bool, default=False,
@@ -81,7 +83,7 @@ misc_arg.add_argument('--experiment_name', type=str, default='test_experiment',
                       help='Name of the experiment, used to store all logs and checkpoints')
 misc_arg.add_argument('--experiment_level', type=int, default=1,
                       help='Level in the experiment, only succesive levels can be passed in here, level 1 must exist before level 2 can be build')
-misc_arg.add_argument('--model_names', nargs='+', default=['RN14', 'MN20', 'EFB0'],
+misc_arg.add_argument('--model_names', nargs='+', default=['RN14', 'MN20', 'CN2'],
                       help='The abbreviation of the model name with size indicator',
                       choices=['EFB0', 'EFB1', 'EFB2', 'EFB3', 'EFB4', 'EFB5', 'EFB6', 'EFB7',
                                'MN20', 'MN30', 'MN40', 'MN50', 'MN60', 'MN70', 'MN85', 'MN100', 'MN125', 'MN150', 'MN200',
@@ -91,6 +93,12 @@ misc_arg.add_argument('--model_names', nargs='+', default=['RN14', 'MN20', 'EFB0
 
 def get_config():
     config, unparsed = parser.parse_known_args()
+    # if config.test_script:
+    #     config.epochs = 30
+    #     config.use_wandb = 0
+    #     config.experiment_name = "testing_{}".format(
+    #         datetime.now().strftime('%Y.%m.%d.%H.%M.%S'))
+
     return config, unparsed
 
 

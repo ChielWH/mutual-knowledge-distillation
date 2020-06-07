@@ -7,4 +7,3 @@ run_scripts/*
 *.pyc
 *.DS_store
 *__pycache__
-*lisa*
