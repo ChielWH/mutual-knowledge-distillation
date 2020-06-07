@@ -1,5 +1,4 @@
 import torch
-
 from trainer import Trainer
 from config import get_config
 from utils import save_config, load_teachers, get_dataset, get_devices
@@ -23,29 +22,38 @@ def main(config):
     data_dict = get_dataset(config.dataset, config.data_dir, 'test')
     kwargs.update(data_dict)
     config.num_classes = data_dict['num_classes']
-    test_data_loader = get_test_loader(batch_size=config.batch_size,
-                                       **kwargs)
+    test_loader = get_test_loader(
+        batch_size=config.batch_size,
+        **kwargs
+    )
+
+    if 'cifar' in config.dataset:
+        valid_loader = test_loader
+
+    else:
+        valid_loader = get_test_loader(
+            batch_size=config.batch_size,
+            **kwargs
+        )
 
     if config.is_train:
         data_dict = get_dataset(config.dataset, config.data_dir, 'train')
         teachers = load_teachers(config, devices, data_dict['img_size'])
         kwargs.update(data_dict)
-        train_data_loader = get_train_loader(batch_size=config.batch_size,
-                                             padding=config.padding,
-                                             padding_mode=config.padding_mode,
-                                             random_seed=config.random_seed,
-                                             shuffle=config.shuffle,
-                                             model_num=len(config.model_names),
-                                             teachers=teachers,
-                                             cuda=use_gpu,
-                                             **kwargs)
-
-        data_loader = (train_data_loader, test_data_loader)
+        train_loader = get_train_loader(batch_size=config.batch_size,
+                                        padding=config.padding,
+                                        padding_mode=config.padding_mode,
+                                        random_seed=config.random_seed,
+                                        shuffle=config.shuffle,
+                                        model_num=len(config.model_names),
+                                        teachers=teachers,
+                                        cuda=use_gpu,
+                                        **kwargs)
     else:
-        data_loader = test_data_loader
+        train_loader = None
 
     # instantiate trainer
-    trainer = Trainer(config, data_loader)
+    trainer = Trainer(config, train_loader, valid_loader, test_loader)
 
     # either train
     if config.is_train:
@@ -53,8 +61,9 @@ def main(config):
         trainer.train()
 
     # or load a pretrained model and test
-    else:
-        trainer.test()
+    # else:
+    trainer.test(config)
+    trainer.test(config, best=True)
 
 
 if __name__ == '__main__':

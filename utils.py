@@ -88,7 +88,7 @@ def save_config(config):
         param_path = os.path.join(experiment_dir, 'config_params.yaml')
         with open(param_path, 'w') as fp:
             yaml.dump(config.__dict__, fp)
-        print(f'[*] Saved config file to ./{param_path}')
+        print(f'[*] Saved config file at ./{param_path}')
 
 
 def print_epoch_stats(model_names, train_losses, train_accs, valid_losses, valid_accs):
@@ -185,7 +185,7 @@ def load_teachers(config, devices, input_size):
         assert len(models) == len(
             config.model_names), f'{len(models)} != {len(config.model_names)}'
         for i, f_name in enumerate(bests):
-            print(f_name)
+            print(f'Loading {f_name} as teacher {i}...')
             state_dict = torch.load(prev_dir_name + f_name)
             model = models[i]
             model.load_state_dict(state_dict['model_state'])
