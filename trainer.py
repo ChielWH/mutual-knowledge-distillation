@@ -2,14 +2,17 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
+from torch.utils.data import DataLoader
 
 import os
 import shutil
 import warnings
 import wandb
 import utils
+from copy import deepcopy
 from datetime import datetime
-from utils import accuracy, RunningAverageMeter, MovingAverageMeter
+from utils import accuracy, RunningAverageMeter, MovingAverageMeter, get_dataset
+from data_loader import get_test_loader
 
 if utils.isnotebook():
     from tqdm.notebook import tqdm
@@ -32,7 +35,7 @@ class Trainer(object):
     config file.
     """
 
-    def __init__(self, config, data_loader):
+    def __init__(self, config, train_loader, valid_loader, test_loader):
         """
         Construct a new Trainer instance.
 
@@ -41,21 +44,35 @@ class Trainer(object):
         - config: object containing command line arguments.
         - data_loader: data iterator
         """
-        self.config = config
 
         # DATA PARAMS
-        if config.is_train:
-            self.train_loader = data_loader[0]
-            self.valid_loader = data_loader[1]
-            self.num_train = len(self.train_loader.dataset)
-            self.num_valid = len(self.valid_loader.dataset)
-            batch = next(iter(self.train_loader))
-        else:
-            self.test_loader = data_loader
-            self.num_test = len(self.test_loader.dataset)
-            batch = next(iter(self.test_loader))
-        self.input_size = utils.infer_input_size(batch)
+        self.train_loader = train_loader
+        self.valid_loader = valid_loader
+        self.test_loader = test_loader
+
+        self.test_script = config.test_script
+        if self.test_script:
+            if config.is_train:
+                self.train_loader = DataLoader(
+                    self.train_loader.sampler.data_source.data[:6 *
+                                                               config.batch_size],
+                    batch_size=config.batch_size
+                )
+
+            self.valid_loader = DataLoader(
+                self.valid_loader.sampler.data_source.data[:2 *
+                                                           config.batch_size],
+                batch_size=config.batch_size
+            )
+
+            self.test_loader = self.valid_loader
+
+        self.num_train = len(self.train_loader.dataset) if train_loader else 0
+        self.num_valid = len(self.valid_loader.dataset) if valid_loader else 0
+        self.num_test = len(self.test_loader.dataset) if test_loader else 0
         self.num_classes = config.num_classes
+        _batch = next(iter(self.test_loader))
+        self.input_size = utils.infer_input_size(_batch)
 
         # TRAINING PARAMS
         self.epochs = config.epochs
@@ -98,7 +115,7 @@ class Trainer(object):
         # LIST AND FUNC INITIALIZATIONS
         self.optimizers = []
         self.schedulers = []
-        self.best_valid_accs = [0.] * self.model_num
+        self.best_valid_accs = [-0.1] * self.model_num
         self.loss_kl = nn.KLDivLoss(reduction='batchmean')
         self.loss_ce = nn.CrossEntropyLoss()
 
@@ -180,9 +197,9 @@ class Trainer(object):
         # if self.resume:
         #     self.load_checkpoint(best=False)
         print(
-            "[*] Trainloop started at {}".format(datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-        print("[*] Train on {} samples, validate on {} samples".format(
-            self.num_train, self.num_valid)
+            "[*] Training started at {}".format(datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+        print("[*] Train on {} samples, validate on {} samples, test on {} samples".format(
+            self.num_train, self.num_valid, self.num_valid)
         )
 
         for epoch in range(self.start_epoch, self.epochs):
@@ -233,7 +250,7 @@ class Trainer(object):
                     {'epoch': epoch + 1,
                      'model_state': net.state_dict(),
                      'optim_state': self.optimizers[i].state_dict(),
-                     'current_valid_acc': valid_metrics['valid acc @ 1'],
+                     'current_valid_acc': valid_metrics['valid acc @ 1'][i].avg,
                      'best_valid_acc': self.best_valid_accs[i]},
                     is_best,
                     self.use_wandb
@@ -241,6 +258,9 @@ class Trainer(object):
 
             for scheduler in self.schedulers:
                 scheduler.step()
+
+        # if self.test_script:
+        #     shutil.rmtree('/'.join(self.experiment_dir.split('/')[:-1]))
 
     def one_iteration(self, train_mode):
         if train_mode:
@@ -296,11 +316,6 @@ class Trainer(object):
             # forward pass
             outputs = []
             for i, net in enumerate(self.nets):
-                # if not train_mode:
-                #     with torch.no_grad():
-                #         outputs.append(net(images[i]))
-                # else:
-                #     outputs.append(net(images[i]))
                 outputs.append(net(images[i]))
 
             # CALCULATE AGGREGATED LOSSES AND UPDATE PARAMETERS
@@ -406,7 +421,7 @@ class Trainer(object):
 
         return metrics
 
-    def test(self):
+    def test(self, config, best=False):
         """
         Test the model on the held-out test data.
         This function should only be called at the very
@@ -416,30 +431,58 @@ class Trainer(object):
         top1 = RunningAverageMeter()
         top5 = RunningAverageMeter()
 
-        # load the best checkpoint
-        self.load_checkpoint(best=self.best)
-        self.model.eval()
-        for i, (images, labels) in enumerate(self.test_loader):
-            if self.use_gpu:
-                images, labels = images.cuda(), labels.cuda()
-            images, labels = Variable(images), Variable(labels)
+        if best:
+            self.load_checkpoints(best=True, inplace=True, verbose=True)
 
-            # forward pass
-            outputs = self.model(images)
-            loss = self.loss_fn(outputs, labels)
+        if not hasattr(self, 'test_loader'):
+            kwargs = {}
+            if not config.disable_cuda and torch.cuda.is_available():
+                kwargs = {'num_workers': 4,
+                          'pin_memory': True}
+            data_dict = get_dataset(config.dataset, config.data_dir, 'test')
+            kwargs.update(data_dict)
+            self.test_loader = get_test_loader(
+                batch_size=config.batch_size,
+                **kwargs)
 
-            # measure accuracy and record loss
-            prec_at_1, prec_at_5 = accuracy(
-                outputs.data, labels.data, topk=(1, 5))
-            losses.update(loss.item(), images.size()[0])
-            top1.update(prec_at_1.item(), images.size()[0])
-            top5.update(prec_at_5.item(), images.size()[0])
+        for net, model_name in zip(self.nets, self.model_names):
+            net.eval()
+            with tqdm(
+                total=len(self.test_loader.dataset),
+                leave=False,
+                desc=f'Testing {model_name}'
+            ) as pbar:
 
-        print(
-            '[*] Test loss: {:.3f}, top1_acc: {:.3f}%, top5_acc: {:.3f}%'
-            .format(
-                losses.avg, top1.avg, top5.avg)
-        )
+                for i, (images, labels, _) in enumerate(self.test_loader):
+                    if self.use_gpu:
+                        images, labels = images.cuda(), labels.cuda()
+                    images, labels = Variable(images), Variable(labels)
+
+                    # forward pass
+                    with torch.no_grad():
+                        outputs = net(images)
+                    loss = self.loss_ce(outputs, labels)
+
+                    # measure accuracy and record loss
+                    prec_at_1, prec_at_5 = accuracy(
+                        outputs.data,
+                        labels.data,
+                        topk=(1, 5)
+                    )
+                    losses.update(loss.item(), images.size()[0])
+                    top1.update(prec_at_1.item(), images.size()[0])
+                    top5.update(prec_at_5.item(), images.size()[0])
+
+                    pbar.update(self.test_loader.batch_size)
+
+                pbar.write(
+                    '[*] {:5}: Test loss: {:.3f}, top1_acc: {:.3f}%, top5_acc: {:.3f}%'
+                    .format(
+                        model_name, losses.avg, top1.avg, top5.avg)
+                )
+
+        if best:
+            self.load_checkpoints(best=False, inplace=True, verbose=False)
 
     def save_checkpoint(self, model_name, state, is_best, use_wandb):
         """
@@ -460,7 +503,7 @@ class Trainer(object):
         )
         torch.save(state, ckpt_path)
         if use_wandb:  # currently getting symlink errors (on Colab)
-            # wandb.run.summary["current valid acc"] = state["current_valid_acc"]
+            wandb.run.summary[f"last valid acc {model_name}"] = state["current_valid_acc"]
             try:
                 wandb.save(ckpt_path)
             except OSError:
@@ -474,9 +517,66 @@ class Trainer(object):
             )
             shutil.copyfile(ckpt_path, path)
             if use_wandb:
-                # wandb.run.summary["best valid acc"] = state["best_valid_acc"]
+                wandb.run.summary["best_valid_acc"] = state["best_valid_acc"]
+                wandb.run.summary[f"best valid acc {model_name}"] = state["best_valid_acc"]
                 try:
                     wandb.save(path)
 
                 except OSError:
                     pass
+
+    def load_checkpoints(self, best=False, inplace=False, verbose=False):
+        """
+        Load the best copy of a model. This is useful for 2 cases:
+        - Resuming training with the most recent model checkpoint.
+        - Loading the best validation model to evaluate on the test data.
+        Params
+        ------
+        - best: if set to True, loads the best model. Use this if you want
+          to evaluate your model on the test data. Else, set to False in
+          which case the most recent version of the checkpoint is used.
+        """
+        ckpt_dir_path = os.path.join(self.experiment_dir, 'ckpt')
+        if verbose:
+            print(f"[*] Loading models from ./{ckpt_dir_path}")
+        checkpoint_extension = '_best.pth.tar' if best else '_ckpt.pth.tar'
+        ckpt_paths = [os.path.join(ckpt_dir_path, model_name + checkpoint_extension)
+                      for model_name in self.indexed_model_names]
+
+        if inplace:
+            nets = self.nets
+            optimizers = self.optimizers
+        else:
+            nets = [deepcopy(net) for net in self.nets]
+            optimizers = [deepcopy(optimizer) for optimizer in self.optimizers]
+
+        ckpts_dict = {}
+        for ckpt_path, model, optimizer, model_name, device in zip(ckpt_paths, nets, optimizers, self.indexed_model_names, self.devices):
+            ckpt = torch.load(ckpt_path, map_location=device)
+
+            # load variables from checkpoint
+            model.load_state_dict(ckpt['model_state'])
+            optimizer.load_state_dict(ckpt['optim_state'])
+            ckpt['model'] = model
+            ckpt['optimizer'] = optimizer
+            ckpts_dict[model_name] = ckpt
+
+            if verbose:
+                if best:
+                    print(
+                        "[*] Loaded {} checkpoint @ epoch {} "
+                        "with best valid acc of {:.3f}".format(
+                            ckpt_path, ckpt['epoch'], ckpt['best_valid_acc'])
+                    )
+                else:
+                    print(
+                        "[*] Loaded {} checkpoint @ epoch {}".format(
+                            ckpt_path, ckpt['epoch'])
+                    )
+
+        if inplace:
+            for i, model_name in enumerate(self.indexed_model_names):
+                self.nets[i] = ckpts_dict[model_name]['model']
+                self.optimizers[i] = ckpts_dict[model_name]['optimizer']
+                self.best_valid_accs[i] = ckpts_dict[model_name]['best_valid_acc']
+                self.start_epoch = ckpts_dict[model_name]['epoch']
