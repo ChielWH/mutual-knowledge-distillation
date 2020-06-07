@@ -64,32 +64,29 @@ class ConvNetMaker(nn.Module):
         return x
 
 
-plain_cifar10_book = {
-    '2': ['Conv16', 'MaxPool', 'Conv16', 'MaxPool', 'FC10'],
-    '4': ['Conv16', 'Conv16', 'MaxPool', 'Conv32', 'Conv32', 'MaxPool', 'FC10'],
-    '6': ['Conv16', 'Conv16', 'MaxPool', 'Conv32', 'Conv32', 'MaxPool', 'Conv64', 'Conv64', 'MaxPool', 'FC10'],
-    '8': ['Conv16', 'Conv16', 'MaxPool', 'Conv32', 'Conv32', 'MaxPool', 'Conv64', 'Conv64', 'MaxPool',
-          'Conv128', 'Conv128', 'MaxPool', 'FC64', 'FC10'],
-    '10': ['Conv32', 'Conv32', 'MaxPool', 'Conv64', 'Conv64', 'MaxPool', 'Conv128', 'Conv128', 'MaxPool',
-           'Conv256', 'Conv256', 'Conv256', 'Conv256', 'MaxPool', 'FC128', 'FC10'],
-}
-
-
-plain_cifar100_book = {
-    '2': ['Conv32', 'MaxPool', 'Conv32', 'MaxPool', 'FC100'],
-    '4': ['Conv32', 'Conv32', 'MaxPool', 'Conv64', 'Conv64', 'MaxPool', 'FC100'],
-    '6': ['Conv32', 'Conv32', 'MaxPool', 'Conv64', 'Conv64', 'MaxPool', 'Conv128', 'Conv128', 'FC100'],
-    '8': ['Conv32', 'Conv32', 'MaxPool', 'Conv64', 'Conv64', 'MaxPool', 'Conv128', 'Conv128', 'MaxPool',
-          'Conv256', 'Conv256', 'MaxPool', 'FC64', 'FC100'],
-    '10': ['Conv32', 'Conv32', 'MaxPool', 'Conv64', 'Conv64', 'MaxPool', 'Conv128', 'Conv128', 'MaxPool',
-           'Conv256', 'Conv256', 'Conv256', 'Conv256', 'MaxPool', 'FC512', 'FC100'],
+plain_cifar_book = {
+    10: {
+        '2': ['Conv16', 'MaxPool', 'Conv16', 'MaxPool', 'FC10'],
+        '4': ['Conv16', 'Conv16', 'MaxPool', 'Conv32', 'Conv32', 'MaxPool', 'FC10'],
+        '6': ['Conv16', 'Conv16', 'MaxPool', 'Conv32', 'Conv32', 'MaxPool', 'Conv64', 'Conv64', 'MaxPool', 'FC10'],
+        '8': ['Conv16', 'Conv16', 'MaxPool', 'Conv32', 'Conv32', 'MaxPool', 'Conv64', 'Conv64', 'MaxPool',
+              'Conv128', 'Conv128', 'MaxPool', 'FC64', 'FC10'],
+        '10': ['Conv32', 'Conv32', 'MaxPool', 'Conv64', 'Conv64', 'MaxPool', 'Conv128', 'Conv128', 'MaxPool',
+               'Conv256', 'Conv256', 'Conv256', 'Conv256', 'MaxPool', 'FC128', 'FC10'],
+    },
+    100: {
+        '2': ['Conv32', 'MaxPool', 'Conv32', 'MaxPool', 'FC100'],
+        '4': ['Conv32', 'Conv32', 'MaxPool', 'Conv64', 'Conv64', 'MaxPool', 'FC100'],
+        '6': ['Conv32', 'Conv32', 'MaxPool', 'Conv64', 'Conv64', 'MaxPool', 'Conv128', 'Conv128', 'FC100'],
+        '8': ['Conv32', 'Conv32', 'MaxPool', 'Conv64', 'Conv64', 'MaxPool', 'Conv128', 'Conv128', 'MaxPool',
+              'Conv256', 'Conv256', 'MaxPool', 'FC64', 'FC100'],
+        '10': ['Conv32', 'Conv32', 'MaxPool', 'Conv64', 'Conv64', 'MaxPool', 'Conv128', 'Conv128', 'MaxPool',
+               'Conv256', 'Conv256', 'Conv256', 'Conv256', 'MaxPool', 'FC512', 'FC100'],
+    }
 }
 
 
 def create_model(size, input_size, num_classes):
     assert size in {'2', '4', '6', '8', '10'}
     assert num_classes in {10, 100}
-    if num_classes == 10:
-        return ConvNetMaker(plain_cifar10_book[size], input_size)
-    if num_classes == 100:
-        return ConvNetMaker(plain_cifar100_book[size], input_size)
+    return ConvNetMaker(plain_cifar_book[num_classes][size], input_size)
