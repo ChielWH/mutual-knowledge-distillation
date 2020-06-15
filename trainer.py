@@ -11,6 +11,7 @@ import wandb
 import utils
 from copy import deepcopy
 from datetime import datetime
+from collections import defaultdict
 from utils import accuracy, RunningAverageMeter, MovingAverageMeter, get_dataset
 from data_loader import get_test_loader
 
@@ -421,7 +422,7 @@ class Trainer(object):
 
         return metrics
 
-    def test(self, config, best=False):
+    def test(self, config, best=False, return_results=True):
         """
         Test the model on the held-out test data.
         This function should only be called at the very
@@ -444,6 +445,9 @@ class Trainer(object):
             self.test_loader = get_test_loader(
                 batch_size=config.batch_size,
                 **kwargs)
+
+        if return_results:
+            results = defaultdict(dict)
 
         for net, model_name in zip(self.nets, self.model_names):
             net.eval()
@@ -481,8 +485,16 @@ class Trainer(object):
                         model_name, losses.avg, top1.avg, top5.avg)
                 )
 
+                if return_results:
+                    results[model_name]['loss'] = losses.avg
+                    results[model_name]['top1_acc'] = top1.avg
+                    results[model_name]['top5_acc'] = top5.avg
+
         if best:
             self.load_checkpoints(best=False, inplace=True, verbose=False)
+
+        if return_results:
+            return results
 
     def save_checkpoint(self, model_name, state, is_best, use_wandb):
         """
