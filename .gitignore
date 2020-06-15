@@ -1,5 +1,6 @@
 data/*
 experiments/*
+experiment_results/*
 run_scripts/*
 *wandb/
 !*/README.md
