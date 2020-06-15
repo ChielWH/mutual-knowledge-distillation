@@ -1,17 +1,30 @@
+import sys
 import torch
+import numpy
+import random
 from trainer import Trainer
 from config import get_config
-from utils import save_config, load_teachers, get_dataset, get_devices
+from utils import save_config, load_teachers, get_dataset, get_devices, copy_first_level
 from data_loader import get_test_loader, get_train_loader
 
 
 def main(config):
+    if config.copy_first_level_from != 'self':
+        copy_first_level(
+            src_exp=config.copy_first_level_from,
+            dst_exp=config.experiment_name
+        )
+        sys.exit(
+            f'First level copied from {config.copy_first_level_from}, done for the first level...')
+
     # ensure reproducibility
     torch.manual_seed(config.random_seed)
+    numpy.random.seed(config.random_seed)
+    random.seed(config.random_seed)
+
     kwargs = {}
     if not config.disable_cuda and torch.cuda.is_available():
         use_gpu = True
-        torch.cuda.manual_seed_all(config.random_seed)
         kwargs = {'num_workers': config.num_workers,
                   'pin_memory': config.pin_memory}
     else:
@@ -67,5 +80,5 @@ def main(config):
 
 
 if __name__ == '__main__':
-    config, unparsed = get_config()
+    config = get_config()
     main(config)

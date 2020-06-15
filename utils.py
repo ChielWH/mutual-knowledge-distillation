@@ -1,6 +1,7 @@
 import os
 import sys
 import yaml
+import shutil
 import torch
 import numpy as np
 from torchvision import datasets, transforms
@@ -39,13 +40,11 @@ class RunningAverageMeter(object):
         self.reset()
 
     def reset(self):
-        self.val = 0
         self.avg = 0
         self.sum = 0
         self.count = 0
 
     def update(self, val, n=1):
-        self.val = val
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
@@ -76,6 +75,27 @@ def prepare_dirs(config, return_dir=True):
         os.makedirs(ckpt_path)
     if return_dir:
         return level_path
+
+
+def copy_first_level(src_exp, dst_exp):
+    for directory in ['ckpt', 'wandb']:
+        src_path = os.path.join('experiments', src_exp, 'level_1', directory)
+        dst_path = os.path.join('experiments', dst_exp, 'level_1', directory)
+        if os.path.exists(dst_path) and any([file.endswith('pth.tar') for file in os.listdir(dst_path)]):
+            out = input(
+                f'Found checkpoint(s) of {dst_exp} at ./{dst_path}, want to overwrite it?\n(yes/no): ')
+            if out.lower() == 'yes':
+                shutil.rmtree(dst_path)
+            else:
+                continue
+                # sys.exit(f'{out} is interpred as no, aborting script...')
+        elif directory == 'wandb':
+            run_dir = os.listdir(src_path)
+            runs = [run for run in run_dir if run.startswith('run')]
+            last_run = sorted(runs)[-1]
+            src_path = os.path.join(src_path, last_run)
+            dst_path = os.path.join(dst_path, last_run)
+        shutil.copytree(src_path, dst_path, symlinks=True)
 
 
 def save_config(config):

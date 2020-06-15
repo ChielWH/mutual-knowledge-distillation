@@ -1,3 +1,4 @@
+import os
 import argparse
 from datetime import datetime
 
@@ -64,7 +65,7 @@ train_arg.add_argument('--temperature', type=float, default=3,
 
 # other params
 misc_arg = add_argument_group('Misc.')
-# misc_arg.add_argument('--test_script', type=str2bool, default=False)
+misc_arg.add_argument('--test_script', type=str2bool, default=False)
 misc_arg.add_argument('--disable_cuda', type=str2bool, default=False,
                       help="Whether disable the GPU, if False, GPU will be utilized if available")
 misc_arg.add_argument('--best', type=str2bool, default=False,
@@ -83,8 +84,11 @@ misc_arg.add_argument('--experiment_name', type=str, default='test_experiment',
                       help='Name of the experiment, used to store all logs and checkpoints')
 misc_arg.add_argument('--experiment_level', type=int, default=1,
                       help='Level in the experiment, only succesive levels can be passed in here, level 1 must exist before level 2 can be build')
+misc_arg.add_argument('--copy_first_level_from', type=str, default='self',
+                      help='Wether or not to start from the second level and copy the first level from another experiment',
+                      choices=set(os.listdir('experiments') + ['self']).difference(set(['.DS_Store', 'README.md'])))
 misc_arg.add_argument('--model_names', nargs='+', default=['RN14', 'MN20', 'CN2'],
-                      help='The abbreviation of the model name with size indicator',
+                      help='The abbreviation of the model name with size indicator (default: %(default)s)',
                       choices=['EFB0', 'EFB1', 'EFB2', 'EFB3', 'EFB4', 'EFB5', 'EFB6', 'EFB7',
                                'MN20', 'MN30', 'MN40', 'MN50', 'MN60', 'MN70', 'MN85', 'MN100', 'MN125', 'MN150', 'MN200',
                                'RN14', 'RN20', 'RN32', 'RN44', 'RN50', 'RN110', 'RN200', 'RN302',
@@ -93,13 +97,23 @@ misc_arg.add_argument('--model_names', nargs='+', default=['RN14', 'MN20', 'CN2'
 
 def get_config():
     config, unparsed = parser.parse_known_args()
-    # if config.test_script:
-    #     config.epochs = 30
-    #     config.use_wandb = 0
-    #     config.experiment_name = "testing_{}".format(
-    #         datetime.now().strftime('%Y.%m.%d.%H.%M.%S'))
 
-    return config, unparsed
+    # assert that the passed arguments are correct and will not conflict later
+    if unparsed:
+        unparsed_args = [arg for arg in unparsed if arg.startswith('--')]
+        raise ValueError(
+            f'Unkown arguments: {unparsed_args}, correct the arguments to proceed.')
+
+    assert config.copy_first_level_from == 'self' or config.experiment_level == 1
+
+    # for testing purposes, will remove later
+    if config.test_script:
+        config.epochs = 3
+        config.use_wandb = 0
+        config.experiment_name = "testing_{}".format(
+            datetime.now().strftime('%Y.%m.%d.%H.%M.%S'))
+
+    return config
 
 
 if __name__ == '__main__':
