@@ -55,13 +55,13 @@ class Trainer(object):
         if self.test_script:
             if config.is_train:
                 self.train_loader = DataLoader(
-                    self.train_loader.sampler.data_source.data[:6 *
+                    self.train_loader.sampler.data_source.data[:100 *
                                                                config.batch_size],
                     batch_size=config.batch_size
                 )
 
             self.valid_loader = DataLoader(
-                self.valid_loader.sampler.data_source.data[:2 *
+                self.valid_loader.sampler.data_source.data[:30 *
                                                            config.batch_size],
                 batch_size=config.batch_size
             )
@@ -83,6 +83,7 @@ class Trainer(object):
         self.weight_decay = config.weight_decay
         self.nesterov = config.nesterov
         self.gamma = config.gamma
+        self.lr_step = config.lr_step
         self.lambda_a = config.lambda_a
         self.lambda_b = config.lambda_b
         self.temperature = config.temperature
@@ -96,7 +97,6 @@ class Trainer(object):
         self.devices = utils.get_devices(self.model_num, self.use_gpu)
         self.best = config.best
         self.counter = 0
-        self.lr_patience = config.lr_patience
         self.use_wandb = config.use_wandb
         self.experiment_name = config.experiment_name.lower().replace(' ', '_')
         self.experiment_level = config.experiment_level
@@ -118,7 +118,7 @@ class Trainer(object):
         self.schedulers = []
         self.best_valid_accs = [-0.1] * self.model_num
         self.loss_kl = nn.KLDivLoss(reduction='batchmean')
-        self.loss_ce = nn.CrossEntropyLoss()
+        self.loss_ce = nn.CrossEntropyLoss(reduction='none')
 
         # LEARNING SIGNAL CONDITIONNS
         # if lambda b = 1. (which it always should be for the first level)
@@ -162,7 +162,7 @@ class Trainer(object):
             # set learning rate decay
             scheduler = torch.optim.lr_scheduler.StepLR(
                 self.optimizers[i],
-                step_size=60,
+                step_size=self.lr_step,
                 gamma=self.gamma,
                 last_epoch=-1
             )
@@ -302,10 +302,10 @@ class Trainer(object):
         for batch_i, batch in enumerate(data_loader):
 
             # unpack batch
-            _images, _true_labels, _psuedo_labels = batch
+            _images, _true_labels, _psuedo_labels, _unlabelled = batch
 
             # place the data to the possibly multiple devices
-            images, true_labels, psuedo_labels = [], [], []
+            images, true_labels, psuedo_labels, unlabelled_mask = [], [], [], []
             for i, device in zip(range(self.model_num), self.devices):
                 images.append(
                     Variable(_images.clone().to(device)))
@@ -313,6 +313,8 @@ class Trainer(object):
                     Variable(_true_labels.clone().to(device)))
                 psuedo_labels.append(
                     _psuedo_labels[:, :, i].to(device))
+                unlabelled_mask.append(
+                    _unlabelled.to(device))
 
             # forward pass
             outputs = []
@@ -323,6 +325,8 @@ class Trainer(object):
             for i in range(self.model_num):
                 # supervised learning signal
                 sl_signal = self.loss_ce(outputs[i], true_labels[i])
+                sl_signal *= unlabelled_mask[i]
+                sl_signal = sl_signal.mean()
 
                 # update the signal for logging
                 if self.sl_condition:
@@ -334,14 +338,9 @@ class Trainer(object):
 
                 # knowledge distillation signal
                 if self.kd_condition:
-                    kd_signal = nn.KLDivLoss()(
-                        F.log_softmax(
-                            outputs[i] / self.temperature,
-                            dim=1),
-                        F.softmax(
-                            psuedo_labels[i] / self.temperature,
-                            dim=1)
-                    )
+                    p_i = F.log_softmax(outputs[i] / self.temperature, dim=1)
+                    p_j = F.softmax(psuedo_labels[i] / self.temperature, dim=1)
+                    kd_signal = nn.KLDivLoss()(p_i, p_j)
 
                     # update the signal for logging
                     kd_signals[i].update(kd_signal)
@@ -457,7 +456,7 @@ class Trainer(object):
                 desc=f'Testing {model_name}'
             ) as pbar:
 
-                for i, (images, labels, _) in enumerate(self.test_loader):
+                for i, (images, labels, _, _) in enumerate(self.test_loader):
                     if self.use_gpu:
                         images, labels = images.cuda(), labels.cuda()
                     images, labels = Variable(images), Variable(labels)
@@ -465,7 +464,7 @@ class Trainer(object):
                     # forward pass
                     with torch.no_grad():
                         outputs = net(images)
-                    loss = self.loss_ce(outputs, labels)
+                    loss = self.loss_ce(outputs, labels).mean()
 
                     # measure accuracy and record loss
                     prec_at_1, prec_at_5 = accuracy(
@@ -481,8 +480,7 @@ class Trainer(object):
 
                 pbar.write(
                     '[*] {:5}: Test loss: {:.3f}, top1_acc: {:.3f}%, top5_acc: {:.3f}%'
-                    .format(
-                        model_name, losses.avg, top1.avg, top5.avg)
+                    .format(model_name, losses.avg, top1.avg, top5.avg)
                 )
 
                 if return_results:
@@ -529,11 +527,9 @@ class Trainer(object):
             )
             shutil.copyfile(ckpt_path, path)
             if use_wandb:
-                wandb.run.summary["best_valid_acc"] = state["best_valid_acc"]
                 wandb.run.summary[f"best valid acc {model_name}"] = state["best_valid_acc"]
                 try:
                     wandb.save(path)
-
                 except OSError:
                     pass
 
