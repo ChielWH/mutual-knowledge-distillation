@@ -267,11 +267,56 @@ def get_devices(model_num, use_gpu):
     return devices
 
 
-def get_dataset(name, data_dir, fold):
-    assert name.lower() in {'cifar10', 'cifar100', 'tiny-imagenet-200'}, \
+def _get_transforms(train, img_size, padding, padding_mode):
+    if train:
+        trans = transforms.Compose([
+            transforms.RandomCrop(
+                size=img_size,
+                padding=padding,
+                padding_mode=padding_mode),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomRotation(degrees=15),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
+    else:
+        trans = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [
+                                 0.229, 0.224, 0.225])
+        ])
+    return trans
+
+
+def get_dataset(name, data_dir, fold, padding, padding_mode):
+    name = name.lower()
+    assert name in {'cifar10', 'cifar100', 'tiny-imagenet-200'}, \
         "Only 'cifar10', 'cifar100', 'tiny-imagenet-200' are valid names fot he supported datasets"
 
     assert fold in {'train', 'val', 'test'}
+    train = fold == 'train'
+
+    dataset_properties = {
+        'cifar10': {
+            'img_size': 32,
+            'num_classes': 10
+        },
+        'cifar100': {
+            'img_size': 32,
+            'num_classes': 100
+        },
+        'tiny-imagenet-200': {
+            'img_size': 64,
+            'num_classes': 200
+        }
+
+    }
+    trans = _get_transforms(
+        train=train,
+        img_size=dataset_properties[name]['img_size'],
+        padding=padding,
+        padding_mode=padding_mode
+    )
 
     if not os.path.exists(data_dir):
         out = input(
@@ -281,12 +326,11 @@ def get_dataset(name, data_dir, fold):
         else:
             sys.exit('Aborting script...')
 
-    if name.lower() == 'cifar10':
-        train = fold == 'train'
+    if name == 'cifar10':
         try:
             dataset = datasets.CIFAR10(
                 root=data_dir,
-                transform=transforms.ToTensor(),
+                transform=trans,
                 download=False,
                 train=train,
             )
@@ -297,23 +341,16 @@ def get_dataset(name, data_dir, fold):
             if out.lower() == 'yes':
                 dataset = datasets.CIFAR10(
                     root=data_dir,
-                    transform=transforms.ToTensor(),
+                    transform=trans,
                     download=True,
                     train=train
                 )
 
-        data_dict = {
-            'data_loader': DataLoader(dataset),
-            'img_size': 32,
-            'num_classes': 10
-        }
-
-    elif name.lower() == 'cifar100':
-        train = fold == 'train'
+    elif name == 'cifar100':
         try:
             dataset = datasets.CIFAR100(
                 root=data_dir,
-                transform=transforms.ToTensor(),
+                transform=trans,
                 download=False,
                 train=train
             )
@@ -324,21 +361,15 @@ def get_dataset(name, data_dir, fold):
             if out.lower() == 'yes':
                 dataset = datasets.CIFAR100(
                     root=data_dir,
-                    transform=transforms.ToTensor(),
+                    transform=trans,
                     download=True,
                     train=train
                 )
 
-        data_dict = {
-            'data_loader': DataLoader(dataset),
-            'img_size': 32,
-            'num_classes': 100
-        }
-
-    elif name.lower() == 'tiny-imagenet-200':
+    elif name == 'tiny-imagenet-200':
         try:
             dataset = datasets.ImageFolder(
-                data_dir + f'/{fold}', transform=transforms.ToTensor())
+                data_dir + f'/{fold}', transform=trans)
         except FileNotFoundError:
             out = input(
                 f'Dataset not found at {data_dir}, want to download it?\n(yes/no): ')
@@ -349,14 +380,18 @@ def get_dataset(name, data_dir, fold):
                 sys.exit(
                     'Aborting script, provide correct data_dir argument or download the dataset next time to proceed using tiny-imagenet-200.')
 
-        data_dict = {
-            'data_loader': DataLoader(dataset),
-            'img_size': 64,
-            'num_classes': 200
-        }
-
     else:
         print("Only 'cifar10', 'cifar100', 'tiny-imagenet-200' are valid names fot he supported datasets")
         sys.exit('Aborting script...')
 
+    data_dict = {
+        'dataset': dataset,
+        **dataset_properties[name]
+    }
+
     return data_dict
+
+
+if __name__ == '__main__':
+    d = get_dataset('cifar100', './data/cifar100/', 'train', 4, 'reflect')
+    print(next(iter(d['data_loader']))[0].shape)
