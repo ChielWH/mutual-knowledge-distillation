@@ -29,11 +29,11 @@ data_arg.add_argument('--padding_mode', type=str, default='reflect',
                       help='padding mode (constant is filled with 0),  see: https://pytorch.org/docs/stable/torchvision/transforms.html -> torchvision.transforms.Pad',
                       choices=['constant', 'reflect', 'edge', 'symmetric'])
 data_arg.add_argument('--num_workers', type=int, default=4,
-                      help='# of subprocesses to use for data loading')
-data_arg.add_argument('--pin_memory', type=str2bool, default=True,
-                      help='whether to copy tensors into CUDA pinned memory')
+                      help='# of subprocesses to use for data loading, guideline is 4 * #GPUs')
 data_arg.add_argument('--shuffle', type=str2bool, default=True,
                       help='Whether to shuffle the train indices')
+data_arg.add_argument('--unlabel_split', type=float, default=.0,
+                      help='Fraction of dataset to discard the labels from')
 
 
 # training params
@@ -50,8 +50,6 @@ train_arg.add_argument('--weight_decay', type=float, default=5e-4,
                        help='value of weight dacay for regularization')
 train_arg.add_argument('--nesterov', type=str2bool, default=True,
                        help='Whether to use Nesterov momentum')
-train_arg.add_argument('--lr_patience', type=int, default=10,
-                       help='Number of epochs to wait before reducing lr')
 train_arg.add_argument('--gamma', type=float, default=0.1,
                        help='value of learning rate decay')
 train_arg.add_argument('--lr_step', type=int, default=60,
@@ -66,26 +64,29 @@ train_arg.add_argument('--temperature', type=float, default=3,
 # other params
 misc_arg = add_argument_group('Misc.')
 misc_arg.add_argument('--test_script', type=str2bool, default=False)
+misc_arg.add_argument('--hp_search', nargs='+', default=False,
+                      help='Wether or not this experiment is part of a hyperparameter search, provide at least on of the choices, the experiment is named accordingly (hp1:value_hp2:value_etc) (default: %(default)s)',
+                      choices=['lambda_a', 'lambda_b', 'temperature', 'init_lr', 'gamma', 'lr_step', 'momentum', 'nesterov'])
 misc_arg.add_argument('--disable_cuda', type=str2bool, default=False,
-                      help="Whether disable the GPU, if False, GPU will be utilized if available")
+                      help="Whether disable the GPU, if False, GPU will be utilized if available (default: %(default)s)")
 misc_arg.add_argument('--best', type=str2bool, default=False,
-                      help='Load best model or most recent for testing')
+                      help='Load best model or most recent for testing (default: %(default)s)')
 misc_arg.add_argument('--random_seed', type=int, default=2020,
-                      help='Seed to ensure reproducibility')
+                      help='Seed to ensure reproducibility (default: %(default)s)')
 misc_arg.add_argument('--data_dir', type=str, default='./data/cifar100',
-                      help='Directory in which data is stored')
+                      help='Directory in which data is stored (default: %(default)s)')
 misc_arg.add_argument('--use_wandb', type=str2bool, default=False,
-                      help='Whether to use Weights and Biases for visualization')
+                      help='Whether to use Weights and Biases for visualization (default: %(default)s)')
 misc_arg.add_argument('--resume', type=str2bool, default=False,
-                      help='Whether to resume training from checkpoint')
+                      help='Whether to resume training from checkpoint (default: %(default)s)')
 misc_arg.add_argument('--progress_bar', type=str2bool, default=False,
-                      help='Whether to log the progress of the training phase')
+                      help='Whether to log the progress of the training phase (default: %(default)s)')
 misc_arg.add_argument('--experiment_name', type=str, default='test_experiment',
-                      help='Name of the experiment, used to store all logs and checkpoints')
+                      help='Name of the experiment, used to store all logs and checkpoints (default: %(default)s)')
 misc_arg.add_argument('--experiment_level', type=int, default=1,
-                      help='Level in the experiment, only succesive levels can be passed in here, level 1 must exist before level 2 can be build')
-misc_arg.add_argument('--copy_first_level_from', type=str, default='self',
-                      help='Wether or not to start from the second level and copy the first level from another experiment',
+                      help='Level in the experiment, only succesive levels can be passed in here, level 1 must exist before level 2 can be build (default: %(default)s)')
+misc_arg.add_argument('--previous_level_from', type=str, default='self',
+                      help='Wether or not to start from the second level and copy the first level from another experiment (default: %(default)s)',
                       choices=set(os.listdir('experiments') + ['self']).difference(set(['.DS_Store', 'README.md'])))
 misc_arg.add_argument('--model_names', nargs='+', default=['RN14', 'MN20', 'CN2'],
                       help='The abbreviation of the model name with size indicator (default: %(default)s)',
@@ -102,13 +103,13 @@ def get_config():
     if unparsed:
         unparsed_args = [arg for arg in unparsed if arg.startswith('--')]
         raise ValueError(
-            f'Unkown arguments: {unparsed_args}, correct the arguments to proceed.')
+            f'Unkown arguments: {unparsed_args}, correct the arguments to proceed. \nList of all unparsed arguments with values:\n {unparsed}')
 
-    assert config.copy_first_level_from == 'self' or config.experiment_level == 1
+    assert config.previous_level_from == 'self' or config.previous_level_from == 1
 
     # for testing purposes, will remove later
     if config.test_script:
-        config.epochs = 3
+        config.epochs = 20
         config.use_wandb = 0
         config.experiment_name = "testing_{}".format(
             datetime.now().strftime('%Y.%m.%d.%H.%M.%S'))
