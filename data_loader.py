@@ -1,191 +1,205 @@
-import inspect
-import numpy as np
-
 import torch
-import torch.nn.functional as F
-from torchvision import datasets
-from torchvision import transforms
-
-from utils import isnotebook
-
+import random
+import numpy as np
+from utils import isnotebook, get_devices, accuracy, RunningAverageMeter
 if isnotebook():
-  from tqdm.notebook import tqdm
+    from tqdm.notebook import tqdm
 else:
-  from tqdm import tqdm
+    from tqdm import tqdm
 
 
 class PsuedoLabelledDataset(torch.utils.data.Dataset):
-  """Psuedo labelled dataset."""
+    """Psuedo labelled dataset."""
 
-  def __init__(self,
-               data_loader,
-               num_classes,
-               trans,
-               batch_size,
-               train,
-               model_num,
-               teachers=[],
-               cuda=False):
+    def __init__(self,
+                 dataset,
+                 num_classes,
+                 batch_size,
+                 train,
+                 model_num,
+                 teachers=[],
+                 unlabel_split=.0,
+                 use_gpu=False,
+                 progress_bar=True):
 
-    self.data = []
-    self.teacher_num = len(teachers)
+        self.data = []
+        self.teacher_num = len(teachers)
 
-    device = torch.device('cuda') if cuda else torch.device('cpu')
+        devices = get_devices(model_num, use_gpu)
 
-    if teachers:
-      # prepare and assert the teachers behaviour
-      sample_images = next(iter(data_loader))[0].to(device)
-      for teacher in teachers:
-        teacher = teacher.to(device)
-        teacher.eval()
-        sample_classes = teacher(sample_images).shape[1]
-        assert sample_classes == num_classes, f"Num classes of the output is {sample_classes}, {num_classes} required"
+        if unlabel_split:
+            len_ds = len(dataset)
+            all_indices = range(len_ds)
+            subset_indices = set(random.sample(
+                all_indices, int(len_ds * unlabel_split)))
+            counter = 0
 
-      # create the psuedo labels
-      with tqdm(total=len(data_loader), smoothing=.005) as pbar:
-        with torch.no_grad():
-          for images, labels in data_loader:
-            if cuda:
-              images = images.to(device)
-            psuedo_labels = torch.stack(
-                [teacher(images).cpu()
-                 for teacher in teachers], -1
-            )
-            if cuda:
-              images = images.cpu()
-              psuedo_labels = psuedo_labels.cpu()
-            for image, label, psuedo_label in zip(images,
-                                                  labels,
-                                                  psuedo_labels):
-              self.data.append(
-                  tuple([image, label, psuedo_label]))
-            pbar.update(1)
+        if progress_bar:
+            pbar = tqdm(total=len(dataset), smoothing=.005)
 
-    else:
-      with tqdm(total=len(data_loader), smoothing=.005) as pbar:
-        dummy_psuedo_label = torch.empty(num_classes, model_num)
-        for images, labels in data_loader:
-          for image, label in zip(images, labels):
-            self.data.append(
-                tuple([image, label, dummy_psuedo_label]))
-          pbar.update(1)
+        if teachers:
+            accuracies = []
+            # prepare and assert the teachers behaviour
+            _batch = dataset[0][0].unsqueeze(0)
+            for teacher, device in zip(teachers, devices):
+                teacher = teacher.to(device)
+                batch = _batch.clone().to(device)
+                teacher.eval()
+                sample_classes = teacher(batch).shape[1]
+                assert sample_classes == num_classes, f"Num classes of the output is {sample_classes}, {num_classes} required"
+                accuracies.append(RunningAverageMeter())
 
-  def __len__(self):
-    return len(self.data)
+            # create the psuedo labels
+            with torch.no_grad():
+                for image, label in dataset:
+                    unlabelled = 1
+                    if unlabel_split:
+                        if counter in subset_indices:
+                            unlabelled = 0
+                        counter += 1
+                    _psuedo_labels = []
+                    for i, (teacher, device) in enumerate(zip(teachers, devices)):
+                        if use_gpu:
+                            image = image.to(device)
+                        # add dimension to comply with the desired input dimension (batch of single image)
+                        pred = teacher(image.unsqueeze(0)).cpu()
+                        _psuedo_labels.append(pred)
+                    image = image.cpu()
+                    psuedo_labels = torch.stack(_psuedo_labels, -1).squeeze(0)
 
-  def __getitem__(self, idx):
-    return self.data[idx]
+                    self.data.append((image, label, psuedo_labels, unlabelled))
+
+                    acc_at_1 = accuracy(
+                        pred,
+                        torch.tensor([[label]]),
+                        topk=(1,)
+                    )[0]
+                    accuracies[i].update(acc_at_1.item())
+
+                    if progress_bar:
+                        pbar.update(1)
+
+            print(
+                f"Accurcies of loaded models are {' '.join([round(acc.avg, 2) for acc in accuracies])}, respectively")
+
+        else:
+            dummy_psuedo_label = torch.empty(num_classes, model_num)
+            for image, label in dataset:
+                unlabelled = 1
+                if unlabel_split:
+                    if counter in subset_indices:
+                        unlabelled = 0
+                    counter += 1
+                self.data.append(
+                    (image, label, dummy_psuedo_label, unlabelled)
+                )
+                if progress_bar:
+                    pbar.update(1)
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        return self.data[idx]
 
 
-def get_train_loader(data_loader,
+def get_train_loader(dataset,
                      batch_size,
-                     img_size,
-                     padding,
-                     padding_mode,
                      num_classes,
                      model_num=3,
                      teachers=[],
-                     cuda=False,
+                     unlabel_split=.0,
+                     use_gpu=False,
                      random_seed=2020,
                      shuffle=True,
                      num_workers=4,
-                     pin_memory=True):
-  """
-  Utility function for loading and returning a multi-process
-  train iterator over the CIFAR100 dataset.
-  If using CUDA, num_workers should be set to 1 and pin_memory to True.
-  Args
-  ----
-  - data_dir: path directory to the dataset.
-  - batch_size: how many samples per batch to load.
-  Returns
-  -------
-  - data_loader: train set iterator.
-  """
-  # define transforms
-  trans = transforms.Compose([
-      transforms.RandomCrop(
-          size=img_size - padding,
-          padding=padding,
-          padding_mode=padding_mode),
-      transforms.RandomHorizontalFlip(),
-      transforms.RandomRotation(degrees=15),
-      transforms.ToTensor(),
-      transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-  ])
+                     progress_bar=True):
+    """
+    Utility function for loading and returning a multi-process
+    train iterator over the CIFAR100 dataset.
+    If using CUDA, num_workers should be set to 1 and pin_memory to True.
+    Args
+    ----
+    - data_dir: path directory to the dataset.
+    - batch_size: how many samples per batch to load.
+    Returns
+    -------
+    - dataset: train set iterator.
+    """
+    _dataset = PsuedoLabelledDataset(dataset=dataset,
+                                     batch_size=batch_size,
+                                     train=True,
+                                     model_num=model_num,
+                                     num_classes=num_classes,
+                                     teachers=teachers,
+                                     unlabel_split=unlabel_split,
+                                     use_gpu=use_gpu,
+                                     progress_bar=progress_bar)
 
-  print('Preparing the training loader...')
-  dataset = PsuedoLabelledDataset(data_loader=data_loader,
-                                  trans=trans,
-                                  batch_size=batch_size,
-                                  train=True,
-                                  model_num=model_num,
-                                  num_classes=num_classes,
-                                  teachers=teachers,
-                                  cuda=cuda)
+    def _worker_init_fn(x):
+        seed = random_seed + x
+        np.random.seed(seed)
+        random.seed(seed)
+        torch.manual_seed(seed)
+        return
 
-  if shuffle:
-    np.random.seed(random_seed)
+    data_loader = torch.utils.data.DataLoader(_dataset,
+                                              batch_size=batch_size,
+                                              shuffle=shuffle,
+                                              num_workers=num_workers,
+                                              pin_memory=use_gpu,
+                                              worker_init_fn=_worker_init_fn)
 
-  data_laoder = torch.utils.data.DataLoader(dataset,
-                                            batch_size=batch_size,
-                                            shuffle=shuffle,
-                                            num_workers=num_workers,
-                                            pin_memory=pin_memory)
-
-  return data_laoder
+    return data_loader
 
 
-def get_test_loader(data_loader,
+def get_test_loader(dataset,
                     batch_size,
-                    img_size,
                     num_classes,
                     teachers=[],
                     model_num=3,
-                    cuda=False,
+                    use_gpu=False,
                     random_seed=2020,
                     shuffle=True,
                     num_workers=4,
-                    pin_memory=True):
-  """
-  Utility function for loading and returning a multi-process
-  test iterator over the CIFAR100 dataset.
-  If using CUDA, num_workers should be set to 1 and pin_memory to True.
-  Args
-  ----
-  - data_dir: path directory to the dataset.
-  - batch_size: how many samples per batch to load.
-  - num_workers: number of subprocesses to use when loading the dataset.
-  - pin_memory: whether to copy tensors into CUDA pinned memory. Set it to
-    True if using GPU.
-  Returns
-  -------
-  - data_loader: test set iterator.
-  """
-  # define transforms
-  trans = transforms.Compose([
-      transforms.ToTensor(),
-      transforms.Normalize([0.485, 0.456, 0.406], [
-                           0.229, 0.224, 0.225])
-  ])
+                    progress_bar=True):
+    """
+    Utility function for loading and returning a multi-process
+    test iterator over the CIFAR100 dataset.
+    If using CUDA, num_workers should be set to 1 and pin_memory to True.
+    Args
+    ----
+    - data_dir: path directory to the dataset.
+    - batch_size: how many samples per batch to load.
+    - num_workers: number of subprocesses to use when loading the dataset.
+    - pin_memory: whether to copy tensors into CUDA pinned memory. Set it to
+      True if using GPU.
+    Returns
+    -------
+    - dataset: test set iterator.
+    """
+    _dataset = PsuedoLabelledDataset(dataset=dataset,
+                                     batch_size=batch_size,
+                                     train=False,
+                                     model_num=model_num,
+                                     num_classes=num_classes,
+                                     teachers=teachers,
+                                     unlabel_split=.0,
+                                     use_gpu=use_gpu,
+                                     progress_bar=progress_bar)
 
-  print('Preparing the testing loader...')
-  dataset = PsuedoLabelledDataset(data_loader=data_loader,
-                                  trans=trans,
-                                  batch_size=batch_size,
-                                  train=False,
-                                  model_num=model_num,
-                                  num_classes=num_classes,
-                                  teachers=teachers,
-                                  cuda=cuda)
+    def _worker_init_fn(x):
+        seed = random_seed + x
+        np.random.seed(seed)
+        random.seed(seed)
+        torch.manual_seed(seed)
+        return
 
-  if shuffle:
-    np.random.seed(random_seed)
+    data_loader = torch.utils.data.DataLoader(_dataset,
+                                              batch_size=batch_size,
+                                              shuffle=shuffle,
+                                              num_workers=num_workers,
+                                              pin_memory=use_gpu,
+                                              worker_init_fn=_worker_init_fn)
 
-  data_loader = torch.utils.data.DataLoader(dataset,
-                                            batch_size=batch_size,
-                                            shuffle=shuffle,
-                                            num_workers=num_workers,
-                                            pin_memory=pin_memory)
-
-  return data_loader
+    return data_loader
