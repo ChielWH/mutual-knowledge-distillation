@@ -64,23 +64,27 @@ class PsuedoLabelledDataset(torch.utils.data.Dataset):
                         # add dimension to comply with the desired input dimension (batch of single image)
                         pred = teacher(image.unsqueeze(0)).cpu()
                         _psuedo_labels.append(pred)
+
+                        # keep track of the accuracy of the teacher model
+                        acc_at_1 = accuracy(
+                            pred,
+                            torch.tensor([[label]]),
+                            topk=(1,))[0]
+                        accuracies[i].update(acc_at_1.item())
+
                     image = image.cpu()
                     psuedo_labels = torch.stack(_psuedo_labels, -1).squeeze(0)
 
                     self.data.append((image, label, psuedo_labels, unlabelled))
 
-                    acc_at_1 = accuracy(
-                        pred,
-                        torch.tensor([[label]]),
-                        topk=(1,)
-                    )[0]
-                    accuracies[i].update(acc_at_1.item())
-
                     if progress_bar:
                         pbar.update(1)
 
+            if progress_bar:
+                pbar.close()
+
             print(
-                f"Accurcies of loaded models are {' '.join([round(acc.avg, 2) for acc in accuracies])}, respectively")
+                f"Accurcies of loaded models are {' ,'.join([str(round(acc.avg, 2))+'%' for acc in accuracies])}, respectively")
 
         else:
             dummy_psuedo_label = torch.empty(num_classes, model_num)
@@ -95,6 +99,9 @@ class PsuedoLabelledDataset(torch.utils.data.Dataset):
                 )
                 if progress_bar:
                     pbar.update(1)
+
+            if progress_bar:
+                pbar.close()
 
     def __len__(self):
         return len(self.data)
