@@ -38,8 +38,10 @@ data_arg.add_argument('--unlabel_split', type=float, default=.0,
 
 # training params
 train_arg = add_argument_group('Training Params')
-train_arg.add_argument('--is_train', type=str2bool, default=True,
-                       help='Whether to train or test the model')
+train_arg.add_argument('--train', type=str2bool, default=True,
+                       help='Whether to train the model or not')
+train_arg.add_argument('--test', type=str2bool, default=True,
+                       help='Whether to test the model or not')
 train_arg.add_argument('--momentum', type=float, default=0.9,
                        help='Momentum value')
 train_arg.add_argument('--epochs', type=int, default=200,
@@ -100,12 +102,14 @@ def get_config():
     config, unparsed = parser.parse_known_args()
 
     # assert that the passed arguments are correct and will not conflict later
-    if unparsed:
-        unparsed_args = [arg for arg in unparsed if arg.startswith('--')]
+    unparsed_args = [arg for arg in unparsed if arg.startswith('--')]
+    if unparsed_args:
         raise ValueError(
             f'Unkown arguments: {unparsed_args}, correct the arguments to proceed. \nList of all unparsed arguments with values:\n {unparsed}')
 
     assert config.previous_level_from == 'self' or config.previous_level_from == 1
+    assert any([config.train, config.test]), \
+        'At least one of `--train` or `--test` must be set to True'
 
     # for testing purposes, will remove later
     if config.test_script:

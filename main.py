@@ -58,7 +58,7 @@ def main(config):
             progress_bar=config.progress_bar
         )
 
-    if config.is_train:
+    if config.train:
         data_dict = get_dataset(
             config.dataset, config.data_dir, 'train', config.padding, config.padding_mode)
         teachers = load_teachers(config, devices, data_dict['img_size'])
@@ -79,15 +79,13 @@ def main(config):
     # instantiate trainer
     trainer = Trainer(config, train_loader, valid_loader, test_loader)
 
-    # either train
-    if config.is_train:
+    if config.train:
         save_config(config)
         trainer.train()
 
-    # or load a pretrained model and test
-    # else:
-    trainer.test(config)
-    trainer.test(config, best=True)
+    if config.test:
+        trainer.test(config)
+        trainer.test(config, best=True)
 
 
 if __name__ == '__main__':
