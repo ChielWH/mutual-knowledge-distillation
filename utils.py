@@ -5,7 +5,6 @@ import shutil
 import torch
 import numpy as np
 from torchvision import datasets, transforms
-from torch.utils.data import DataLoader
 from model_factories import (
     efficientnet_factory,
     mobilenetv2_factory,
@@ -205,7 +204,7 @@ def load_teachers(config, devices, input_size):
         assert len(models) == len(
             config.model_names), f'{len(models)} != {len(config.model_names)}'
         for i, f_name in enumerate(bests):
-            print(f'Loading {f_name} as teacher {i}...')
+            print(f'Loading {f_name} as teacher {i + 1}...')
             state_dict = torch.load(prev_dir_name + f_name)
             model = models[i]
             model.load_state_dict(state_dict['model_state'])
@@ -288,7 +287,7 @@ def _get_transforms(train, img_size, padding, padding_mode):
     return trans
 
 
-def get_dataset(name, data_dir, fold, padding, padding_mode):
+def get_dataset(name, data_dir, fold, padding=4, padding_mode='reflect'):
     name = name.lower()
     assert name in {'cifar10', 'cifar100', 'tiny-imagenet-200'}, \
         "Only 'cifar10', 'cifar100', 'tiny-imagenet-200' are valid names fot he supported datasets"
