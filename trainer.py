@@ -53,7 +53,7 @@ class Trainer(object):
 
         self.test_script = config.test_script
         if self.test_script:
-            if config.is_train:
+            if config.train:
                 self.train_loader = DataLoader(
                     self.train_loader.sampler.data_source.data[:100 *
                                                                config.batch_size],
@@ -123,12 +123,18 @@ class Trainer(object):
         # LEARNING SIGNAL CONDITIONNS
         # if lambda b = 1. (which it always should be for the first level)
         # the kd part is disabled and should therefore not be logged
-        self.kd_condition = bool(1 - self.lambda_b)
+        self.kd_condition = all([
+            bool(1 - self.lambda_b),
+            self.experiment_level > 1
+        ])
 
         # deep mutual learning can only be done on a set of models
         # the dml is therefore disabled for model_num <= 1 (for a kd experiment for instance)
-        self.dml_condition = any(
-            [self.model_num >= 2, bool(self.lambda_b), bool(self.lambda_a)])
+        self.dml_condition = any([
+            self.model_num >= 2,
+            bool(self.lambda_b),
+            bool(self.lambda_a)
+        ])
 
         # if both previous conditions are False, the sl_signal is equal to the overall loss,
         # therefore we do not need the sl_signal explicitely
@@ -432,7 +438,7 @@ class Trainer(object):
         top5 = RunningAverageMeter()
 
         if best:
-            self.load_checkpoints(best=True, inplace=True, verbose=True)
+            self.load_checkpoints(best=True, inplace=True, verbose=False)
 
         if not hasattr(self, 'test_loader'):
             kwargs = {}
@@ -450,11 +456,13 @@ class Trainer(object):
 
         for net, model_name in zip(self.nets, self.model_names):
             net.eval()
-            with tqdm(
-                total=len(self.test_loader.dataset),
-                leave=False,
-                desc=f'Testing {model_name}'
-            ) as pbar:
+
+            if self.progressbar:
+                pbar = tqdm(
+                    total=len(self.test_loader.dataset),
+                    leave=False,
+                    desc=f'Testing {model_name}'
+                )
 
                 for i, (images, labels, _, _) in enumerate(self.test_loader):
                     if self.use_gpu:
@@ -476,12 +484,19 @@ class Trainer(object):
                     top1.update(prec_at_1.item(), images.size()[0])
                     top5.update(prec_at_5.item(), images.size()[0])
 
-                    pbar.update(self.test_loader.batch_size)
+                    if self.progressbar:
+                        pbar.update(self.test_loader.batch_size)
+                if self.progressbar:
+                    pbar.write(
+                        '[*] {:5}: Test loss: {:.3f}, top1_acc: {:.3f}%, top5_acc: {:.3f}%'
+                        .format(model_name, losses.avg, top1.avg, top5.avg)
+                    )
+                    pbar.close()
 
-                pbar.write(
-                    '[*] {:5}: Test loss: {:.3f}, top1_acc: {:.3f}%, top5_acc: {:.3f}%'
-                    .format(model_name, losses.avg, top1.avg, top5.avg)
-                )
+                fold = 'best' if best else 'last'
+
+                if self.use_wandb:
+                    wandb.run.summary[f"{fold} test acc {model_name}"] = top1.avg
 
                 if return_results:
                     results[model_name]['loss'] = losses.avg
