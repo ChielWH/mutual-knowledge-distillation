@@ -1,0 +1,45 @@
+program: main.py
+name: hp_search_l3
+project: hp_search_level_3
+method: bayes
+metric:
+  goal: maximize
+  name: min acc
+parameters:
+  lambda_a:
+    distribution: uniform
+    min: 0
+    max: 1
+  lambda_b:
+    distribution: uniform
+    min: 0
+    max: 1
+  temperature:
+    distribution: uniform
+    min: 1
+    max: 10
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - "--model_names"
+  - RN14:MN20:CN2
+  - "--data_dir"
+  - /scratch/cifar100
+  - "--dataset"
+  - cifar100
+  - "--num_workers"
+  - 0
+  - "--experiment_name"
+  - hp_search_l3
+  - "--experiment_level"
+  - 3
+  - "--use_wandb"
+  - 1
+  - "--progress_bar"
+  - 0
+  - "--hp_search"
+  - lambda_a:lambda_b:temperature
+  - "--use_sweep"
+  - 1
+  - ${args}

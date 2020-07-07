@@ -1,6 +1,6 @@
 import torch
 import random
-import numpy as np
+import numpy
 from utils import isnotebook, get_devices, accuracy, RunningAverageMeter
 if isnotebook():
     from tqdm.notebook import tqdm
@@ -74,7 +74,6 @@ class PsuedoLabelledDataset(torch.utils.data.Dataset):
 
                     image = image.cpu()
                     psuedo_labels = torch.stack(_psuedo_labels, -1).squeeze(0)
-
                     self.data.append((image, label, psuedo_labels, unlabelled))
 
                     if progress_bar:
@@ -143,21 +142,7 @@ def get_train_loader(dataset,
                                      use_gpu=use_gpu,
                                      progress_bar=progress_bar)
 
-    def _worker_init_fn(x):
-        seed = random_seed + x
-        np.random.seed(seed)
-        random.seed(seed)
-        torch.manual_seed(seed)
-        return
-
-    data_loader = torch.utils.data.DataLoader(_dataset,
-                                              batch_size=batch_size,
-                                              shuffle=shuffle,
-                                              num_workers=num_workers,
-                                              pin_memory=use_gpu,
-                                              worker_init_fn=_worker_init_fn)
-
-    return data_loader
+    return make_loader(_dataset, batch_size, shuffle, num_workers, random_seed)
 
 
 def get_test_loader(dataset,
@@ -195,18 +180,18 @@ def get_test_loader(dataset,
                                      use_gpu=use_gpu,
                                      progress_bar=progress_bar)
 
-    def _worker_init_fn(x):
-        seed = random_seed + x
-        np.random.seed(seed)
-        random.seed(seed)
-        torch.manual_seed(seed)
-        return
+    return make_loader(_dataset, batch_size, shuffle, num_workers, random_seed)
 
-    data_loader = torch.utils.data.DataLoader(_dataset,
-                                              batch_size=batch_size,
-                                              shuffle=shuffle,
-                                              num_workers=num_workers,
-                                              pin_memory=use_gpu,
-                                              worker_init_fn=_worker_init_fn)
 
-    return data_loader
+def make_loader(dataset, batch_size, shuffle, num_workers, use_gpu, random_seed=2020):
+    def _worker_init_fn(worker_id):
+        worker_seed = torch.initial_seed() % 2**32
+        numpy.random.seed(worker_seed)
+        random.seed(worker_seed)
+
+    return torch.utils.data.DataLoader(dataset,
+                                       batch_size=batch_size,
+                                       shuffle=shuffle,
+                                       num_workers=num_workers,
+                                       pin_memory=use_gpu,
+                                       worker_init_fn=_worker_init_fn)

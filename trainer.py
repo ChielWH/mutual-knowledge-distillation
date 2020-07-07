@@ -1,17 +1,19 @@
+import os
+import shutil
+import warnings
+from copy import deepcopy
+from datetime import datetime
+# from collections import defaultdict
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 from torch.utils.data import DataLoader
-
-import os
-import shutil
-import warnings
+import numpy as np
 import wandb
+
 import utils
-from copy import deepcopy
-from datetime import datetime
-from collections import defaultdict
 from utils import accuracy, RunningAverageMeter, MovingAverageMeter, get_dataset
 from data_loader import get_test_loader
 
@@ -53,23 +55,39 @@ class Trainer(object):
 
         self.test_script = config.test_script
         if self.test_script:
-            if config.train:
-                self.train_loader = DataLoader(
-                    self.train_loader.sampler.data_source.data[:100 *
-                                                               config.batch_size],
+            try:
+                if config.train:
+                    self.train_loader = DataLoader(
+                        self.train_loader.sampler.data_source.data[
+                            :10 * config.batch_size],
+                        batch_size=config.batch_size
+                    )
+
+                self.valid_loader = DataLoader(
+                    self.valid_loader.sampler.data_source.data[
+                        :3 * config.batch_size],
+                    batch_size=config.batch_size
+                )
+            except AttributeError:
+                if config.train:
+                    self.train_loader = DataLoader(
+                        self.train_loader.sampler.data_source.dataset.data[
+                            :10 * config.batch_size],
+                        batch_size=config.batch_size
+                    )
+
+                self.valid_loader = DataLoader(
+                    self.valid_loader.sampler.data_source.dataset.data[
+                        :3 * config.batch_size],
                     batch_size=config.batch_size
                 )
 
-            self.valid_loader = DataLoader(
-                self.valid_loader.sampler.data_source.data[:30 *
-                                                           config.batch_size],
-                batch_size=config.batch_size
-            )
-
             self.test_loader = self.valid_loader
 
-        self.num_train = len(self.train_loader.dataset) if train_loader else 0
-        self.num_valid = len(self.valid_loader.dataset) if valid_loader else 0
+        self.num_train = len(
+            self.train_loader.dataset) if train_loader else 0
+        self.num_valid = len(
+            self.valid_loader.dataset) if valid_loader else 0
         self.num_test = len(self.test_loader.dataset) if test_loader else 0
         self.num_classes = config.num_classes
         _batch = next(iter(self.test_loader))
@@ -90,43 +108,43 @@ class Trainer(object):
 
         # MISCELLANEOUS PARAMS
         self.model_num = len(config.model_names)
-        if not config.disable_cuda and torch.cuda.is_available():
-            self.use_gpu = True
-        else:
-            self.use_gpu = False
-        self.devices = utils.get_devices(self.model_num, self.use_gpu)
-        self.best = config.best
         self.counter = 0
         self.use_wandb = config.use_wandb
-        self.experiment_name = config.experiment_name.lower().replace(' ', '_')
-        self.experiment_level = config.experiment_level
-        self.resume = config.resume
+        self.use_sweep = config.use_sweep
         self.progress_bar = config.progress_bar
+        self.experiment_level = config.experiment_level
+        self.experiment_name = config.experiment_name
+        self.level_name = config.level_name
 
-        # MODEL SPECIFIC PARAMS
+        # MODELS AND MODEL ATTRIBUTES
         self.model_names = config.model_names
+        self.indexed_model_names = [
+            f'({i})_{model_name}' for i, model_name in enumerate(self.model_names, 1)
+        ]
+        self.use_gpu = (not config.disable_cuda and torch.cuda.is_available())
+        self.devices = utils.get_devices(self.model_num, self.use_gpu)
         self.nets = utils.model_init_and_placement(
             self.model_names,
             self.devices,
             self.input_size,
             self.num_classes)
-        self.indexed_model_names = [
-            f'({i})_{model_name}' for i, model_name in enumerate(self.model_names, 1)]
 
-        # LIST AND FUNC INITIALIZATIONS
-        self.optimizers = []
-        self.schedulers = []
-        self.best_valid_accs = [-0.1] * self.model_num
+        # LOSS FUNCTIONS
         self.loss_kl = nn.KLDivLoss(reduction='batchmean')
         self.loss_ce = nn.CrossEntropyLoss(reduction='none')
 
-        # LEARNING SIGNAL CONDITIONNS
+        # KEEP TRACK OF THE VALIDATION ACCURACY
+        self.best_valid_accs = [-0.1] * self.model_num
+        self.best_mean_valid_acc = -0.1
+
+        # LEARNING SIGNAL CONDITIONNS ADN FRACTIONS
         # if lambda b = 1. (which it always should be for the first level)
         # the kd part is disabled and should therefore not be logged
         self.kd_condition = all([
             bool(1 - self.lambda_b),
             self.experiment_level > 1
         ])
+        self.kd_fraction = (1 - self.lambda_b) * self.lambda_a
 
         # deep mutual learning can only be done on a set of models
         # the dml is therefore disabled for model_num <= 1 (for a kd experiment for instance)
@@ -135,24 +153,42 @@ class Trainer(object):
             bool(self.lambda_b),
             bool(self.lambda_a)
         ])
+        self.dml_fraction = self.lambda_a * self.lambda_b
 
         # if both previous conditions are False, the sl_signal is equal to the overall loss,
         # therefore we do not need the sl_signal explicitely
         self.sl_condition = any([self.dml_condition, self.kd_condition])
+        self.sl_fraction = 1 - self.lambda_a
 
         # CONFIGURE WEIGHTS & BIASES LOGGING AND SAVE DIR
-        self.experiment_dir = utils.prepare_dirs(config)
+        self.experiment_dir = utils.prepare_dirs(
+            self.experiment_name,
+            self.level_name
+        )
         if self.use_wandb:
-            wandb.init(name=f'Level {self.experiment_level}',
-                       project=self.experiment_name,
-                       dir=self.experiment_dir,
-                       config=config,
-                       id=str(self.experiment_level),
-                       tags=list(set(config.model_names))
-                       )
+            wandb.init(
+                name=self.level_name,
+                project=self.experiment_name,
+                dir=self.experiment_dir,
+                config=config,
+                id=self.level_name,
+                tags=list(set(config.model_names))
+            )
+            wandb.log({
+                'sl fraction': self.sl_fraction,
+                'kd fraction': self.kd_fraction,
+                'dml fraction': self.dml_fraction
+            })
+            if self.use_sweep:
+                _config = wandb.config
+                for param in config.hp_search:
+                    print(param, getattr(_config, param))
+                    setattr(self, param, getattr(_config, param))
 
         # INITIALIZE OPTIMIZER & SCHEDULER AND LOG THE MODEL DESCRIPTIONS
         model_stats = []
+        self.optimizers = []
+        self.schedulers = []
         for i, net in enumerate(self.nets):
 
             optimizer = torch.optim.SGD(
@@ -206,7 +242,7 @@ class Trainer(object):
         print(
             "[*] Training started at {}".format(datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         print("[*] Train on {} samples, validate on {} samples, test on {} samples".format(
-            self.num_train, self.num_valid, self.num_valid)
+            self.num_train, self.num_valid, self.num_test)
         )
 
         for epoch in range(self.start_epoch, self.epochs):
@@ -236,9 +272,16 @@ class Trainer(object):
                 valid_accs=valid_metrics['valid acc @ 1']
             )
 
+            mean_valid_acc = np.array(
+                [acc.avg for acc in valid_metrics['valid acc @ 1']]).mean()
+            if self.best_mean_valid_acc < mean_valid_acc:
+                self.best_mean_valid_acc = mean_valid_acc
+                if self.use_wandb:
+                    wandb.run.summary["best_mean_valid_acc"] = mean_valid_acc
+
             # log all metrics to Weights and Biases
             if self.use_wandb:
-                log_dict = {}
+                log_dict = {'Average validation accuracy': mean_valid_acc}
                 for i, model_name in enumerate(self.indexed_model_names):
                     for metric_dict in [train_metrics, valid_metrics]:
                         for metric_name, avg_meter in metric_dict.items():
@@ -248,7 +291,7 @@ class Trainer(object):
             # save epoch state
             for i, net in enumerate(self.nets):
                 is_best = False
-                if self.best_valid_accs[i] < valid_metrics['valid acc @ 1'][i].avg:
+                if self.best_mean_valid_acc < valid_metrics['valid acc @ 1'][i].avg:
                     is_best = True
                     self.best_valid_accs[i] = valid_metrics['valid acc @ 1'][i].avg
 
@@ -339,43 +382,40 @@ class Trainer(object):
                     sl_signals[i].update(sl_signal)
 
                 # initialize the overall loss
-                sl_part = (1 - self.lambda_a) * sl_signal
+                sl_part = self.sl_fraction * sl_signal
                 loss = sl_part
 
                 # knowledge distillation signal
                 if self.kd_condition:
                     p_i = F.log_softmax(outputs[i] / self.temperature, dim=1)
                     p_j = F.softmax(psuedo_labels[i] / self.temperature, dim=1)
-                    kd_signal = nn.KLDivLoss()(p_i, p_j)
+                    kd_signal = self.loss_kl(p_i, p_j)
+                    kd_signal *= self.temperature ** 2
 
                     # update the signal for logging
                     kd_signals[i].update(kd_signal)
 
                     # add kd signal to the overall loss
-                    kd_part = (1 - self.lambda_b) * self.lambda_a * \
-                        self.temperature * self.temperature * kd_signal
+                    kd_part = self.kd_fraction * kd_signal
                     loss += kd_part
 
                 # deep mutual learning signal
                 if self.dml_condition:
-                    p_i = outputs[i]
+                    p_i = F.log_softmax(outputs[i], dim=1)
                     dml_signal = 0
                     for j in range(self.model_num):
                         if i != j:
-                            p_j = outputs[j]
+                            p_j = F.softmax(Variable(outputs[j]), dim=1)
                             if len(self.devices) > 1:
                                 p_j = p_j.clone().to(self.devices[i])
-                            dml_signal += self.loss_kl(
-                                F.log_softmax(p_i, dim=1),
-                                F.softmax(Variable(p_j), dim=1)
-                            )
+                            dml_signal += self.loss_kl(p_i, p_j)
+                    dml_signal /= max(1, self.model_num - 1)
 
                     # update the signal for logging
                     dml_signals[i].update(dml_signal)
 
                     # add dml signal to the overall loss
-                    dml_part = self.lambda_b * \
-                        (dml_signal / max(1, self.model_num - 1))
+                    dml_part = self.dml_fraction * dml_signal
                     loss += dml_part
 
                 # COMPUTE GRADIENTS AND UPDATE SGD
@@ -403,8 +443,8 @@ class Trainer(object):
             if train_mode and self.progress_bar:
                 pbar.set_description(
                     "Average loss: {:.3f}, average acc: {:.3f}".format(
-                        sum([loss.avg for loss in losses]) / len(losses),
-                        sum([acc.avg for acc in accs_at_1]) / len(accs_at_1)
+                        sum([loss for loss in losses]) / len(losses),
+                        sum([acc for acc in accs_at_1]) / len(accs_at_1)
                     )
                 )
                 batch_size = _images.shape[0]
@@ -437,6 +477,8 @@ class Trainer(object):
         top1 = RunningAverageMeter()
         top5 = RunningAverageMeter()
 
+        keep_track_of_results = return_results or self.use_wandb
+
         if best:
             self.load_checkpoints(best=True, inplace=True, verbose=False)
 
@@ -451,13 +493,14 @@ class Trainer(object):
                 batch_size=config.batch_size,
                 **kwargs)
 
-        if return_results:
-            results = defaultdict(dict)
+        if keep_track_of_results:
+            results = {}
+            all_accs = []
 
         for net, model_name in zip(self.nets, self.model_names):
             net.eval()
 
-            if self.progressbar:
+            if self.progress_bar:
                 pbar = tqdm(
                     total=len(self.test_loader.dataset),
                     leave=False,
@@ -484,27 +527,36 @@ class Trainer(object):
                     top1.update(prec_at_1.item(), images.size()[0])
                     top5.update(prec_at_5.item(), images.size()[0])
 
-                    if self.progressbar:
+                    if self.progress_bar:
                         pbar.update(self.test_loader.batch_size)
-                if self.progressbar:
+                if self.progress_bar:
                     pbar.write(
                         '[*] {:5}: Test loss: {:.3f}, top1_acc: {:.3f}%, top5_acc: {:.3f}%'
                         .format(model_name, losses.avg, top1.avg, top5.avg)
                     )
                     pbar.close()
 
-                fold = 'best' if best else 'last'
+            fold = 'best' if best else 'last'
 
-                if self.use_wandb:
-                    wandb.run.summary[f"{fold} test acc {model_name}"] = top1.avg
+            if self.use_wandb:
+                wandb.run.summary[f"{fold} test acc {model_name}"] = top1.avg
 
-                if return_results:
-                    results[model_name]['loss'] = losses.avg
-                    results[model_name]['top1_acc'] = top1.avg
-                    results[model_name]['top5_acc'] = top5.avg
+            if keep_track_of_results:
+                results[f'{model_name} loss'] = losses.avg
+                results[f'{model_name} top1_acc'] = top1.avg
+                results[f'{model_name} top5_acc'] = top5.avg
+                all_accs.append(top1.avg)
+
+        if keep_track_of_results:
+            results['average acc'] = sum(all_accs) / len(all_accs)
+            results['min acc'] = min(all_accs)
+            results['max acc'] = max(all_accs)
 
         if best:
             self.load_checkpoints(best=False, inplace=True, verbose=False)
+
+        if self.use_wandb:
+            wandb.log(results)
 
         if return_results:
             return results

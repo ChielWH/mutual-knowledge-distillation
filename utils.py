@@ -12,7 +12,58 @@ from model_factories import (
     plain_cnn_factory)
 
 
-class MovingAverageMeter(object):
+class AverageMeterBase(object):
+    def __lt__(self, other):
+        return self.avg < other
+
+    def __le__(self, other):
+        return self.avg <= other
+
+    def __eq__(self, other):
+        return self.avg == other
+
+    def __ne__(self, other):
+        return self.avg != other
+
+    def __gt__(self, other):
+        return self.avg > other
+
+    def __ge__(self, other):
+        return self.avg >= other
+
+    def __add__(self, other):
+        if type(other) in {int, float}:
+            return self.avg + other
+        return self.avg + other.avg
+
+    def __sub__(self, other):
+        if type(other) in {int, float}:
+            return self.avg - other
+        return self.avg + other.avg
+
+    def __mul__(self, other):
+        if type(other) in {int, float}:
+            return self.avg - other
+        return self.avg * other.avg
+
+    def __truediv__(self, other):
+        if type(other) in {int, float}:
+            return self.avg - other
+        return self.avg + other.avg
+
+    # __radd__ = __add__
+    __rsub__ = __sub__
+    __rmul__ = __mul__
+    __rtruediv__ = __truediv__
+
+    def __repr__(self):
+        return repr(self.avg)
+
+    def __str__(self):
+        return str(self.avg)
+
+
+class MovingAverageMeter(AverageMeterBase):
     """
     Computes and stores the average and
     current value.
@@ -29,7 +80,7 @@ class MovingAverageMeter(object):
             self.avg = val
 
 
-class RunningAverageMeter(object):
+class RunningAverageMeter(AverageMeterBase):
     """
     Computes and stores the average and
     current value.
@@ -65,10 +116,8 @@ def accuracy(output, target, topk=(1,)):
     return res
 
 
-def prepare_dirs(config, return_dir=True):
-    experiment_name = config.experiment_name.lower().replace(' ', '_')
-    level = f'level_{config.experiment_level}'
-    level_path = os.path.join('experiments', experiment_name, level)
+def prepare_dirs(experiment_name, experiment_level, return_dir=True):
+    level_path = os.path.join('experiments', experiment_name, experiment_level)
     ckpt_path = os.path.join(level_path, 'ckpt')
     if not os.path.exists(ckpt_path):
         os.makedirs(ckpt_path)
@@ -98,7 +147,10 @@ def copy_first_level(src_exp, dst_exp):
 
 
 def save_config(config):
-    experiment_dir = prepare_dirs(config)
+    experiment_dir = prepare_dirs(
+        config.experiment_name,
+        config.level_name
+    )
     if config.use_wandb:
         import wandb
         print(
@@ -178,6 +230,16 @@ def infer_model_desc(model_name):
     return architecture, size_indicator
 
 
+def split_loader(data_loader, cut_off=5000):
+    dataset = data_loader.dataset
+    first_split = len(dataset) - cut_off
+    datasets = torch.utils.data.random_split(
+        dataset=dataset,
+        lengths=[first_split, cut_off]
+    )
+    return datasets
+
+
 def load_teachers(config, devices, input_size):
     level = config.experiment_level
     if level < 1:
@@ -205,7 +267,12 @@ def load_teachers(config, devices, input_size):
             config.model_names), f'{len(models)} != {len(config.model_names)}'
         for i, f_name in enumerate(bests):
             print(f'Loading {f_name} as teacher {i + 1}...')
-            state_dict = torch.load(prev_dir_name + f_name)
+            try:
+                state_dict = torch.load(prev_dir_name + f_name)
+            except RuntimeError:
+                state_dict = torch.load(
+                    prev_dir_name + f_name,
+                    map_location=torch.device('cpu'))
             model = models[i]
             model.load_state_dict(state_dict['model_state'])
             teachers.append(model)
@@ -392,5 +459,10 @@ def get_dataset(name, data_dir, fold, padding=4, padding_mode='reflect'):
 
 
 if __name__ == '__main__':
-    d = get_dataset('cifar100', './data/cifar100/', 'train', 4, 'reflect')
-    print(next(iter(d['data_loader']))[0].shape)
+    # d = get_dataset('cifar100', './data/cifar100/', 'train', 4, 'reflect')
+    # print(next(iter(d['data_loader']))[0].shape)
+    a = MovingAverageMeter()
+    b = MovingAverageMeter()
+    a.update(1)
+    b.update(2)
+    print('\n', 'answer:', a + b)
