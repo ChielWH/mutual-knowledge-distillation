@@ -6,7 +6,6 @@ import torch
 import numpy as np
 from torchvision import datasets, transforms
 from model_factories import (
-    efficientnet_factory,
     mobilenetv2_factory,
     resnet_factory,
     plain_cnn_factory)
@@ -51,7 +50,7 @@ class AverageMeterBase(object):
             return self.avg - other
         return self.avg + other.avg
 
-    # __radd__ = __add__
+    __radd__ = __add__
     __rsub__ = __sub__
     __rmul__ = __mul__
     __rtruediv__ = __truediv__
@@ -247,8 +246,15 @@ def load_teachers(config, devices, input_size):
     elif level == 1:
         return []
     elif level > 1:
-        experiment_name = config.experiment_name.lower().replace(' ', '_')
-        prev_dir_name = f'experiments/{experiment_name}/level_{level - 1}/ckpt/'
+        if config.hp_search_from_static:
+            pre_level_name = f'level_{config.experiment_level - 1}'
+        else:
+            pre_level_name = config.level_name[:6] \
+                + str(int(config.level_name[6]) - 1) \
+                + config.level_name[7:]
+        experiment_name = config.experiment_name.replace(' ', '_')
+        prev_dir_name = f'experiments/{experiment_name}/{pre_level_name}/ckpt/'
+        print(prev_dir_name)
         assert os.path.exists(
             prev_dir_name), "Can only load teacher models from levels of which all previous levels have been run."
         ckpts = os.listdir(prev_dir_name)
@@ -466,3 +472,4 @@ if __name__ == '__main__':
     a.update(1)
     b.update(2)
     print('\n', 'answer:', a + b)
+    print('\n', 'answer:', a <= b)
