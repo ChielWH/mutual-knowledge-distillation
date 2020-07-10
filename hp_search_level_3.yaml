@@ -40,6 +40,8 @@ command:
   - 0
   - "--hp_search"
   - lambda_a:lambda_b:temperature
+  - "--hp_search_from_static"
+  - 1
   - "--use_sweep"
   - 1
   - ${args}

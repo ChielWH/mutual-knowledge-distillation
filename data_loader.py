@@ -109,6 +109,20 @@ class PsuedoLabelledDataset(torch.utils.data.Dataset):
         return self.data[idx]
 
 
+def make_loader(dataset, batch_size, shuffle, num_workers, use_gpu, random_seed=2020):
+    def _worker_init_fn(worker_id):
+        worker_seed = torch.initial_seed() % 2**32
+        numpy.random.seed(worker_seed)
+        random.seed(worker_seed)
+
+    return torch.utils.data.DataLoader(dataset,
+                                       batch_size=batch_size,
+                                       shuffle=shuffle,
+                                       num_workers=num_workers,
+                                       pin_memory=use_gpu,
+                                       worker_init_fn=_worker_init_fn)
+
+
 def get_train_loader(dataset,
                      batch_size,
                      num_classes,
@@ -181,17 +195,3 @@ def get_test_loader(dataset,
                                      progress_bar=progress_bar)
 
     return make_loader(_dataset, batch_size, shuffle, num_workers, random_seed)
-
-
-def make_loader(dataset, batch_size, shuffle, num_workers, use_gpu, random_seed=2020):
-    def _worker_init_fn(worker_id):
-        worker_seed = torch.initial_seed() % 2**32
-        numpy.random.seed(worker_seed)
-        random.seed(worker_seed)
-
-    return torch.utils.data.DataLoader(dataset,
-                                       batch_size=batch_size,
-                                       shuffle=shuffle,
-                                       num_workers=num_workers,
-                                       pin_memory=use_gpu,
-                                       worker_init_fn=_worker_init_fn)
