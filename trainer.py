@@ -59,7 +59,7 @@ class Trainer(object):
                 if config.train:
                     self.train_loader = DataLoader(
                         self.train_loader.sampler.data_source.data[
-                            :10 * config.batch_size],
+                            :100 * config.batch_size],
                         batch_size=config.batch_size
                     )
 
@@ -115,6 +115,8 @@ class Trainer(object):
         self.experiment_level = config.experiment_level
         self.experiment_name = config.experiment_name
         self.level_name = config.level_name
+        self.unlabelled = bool(config.unlabel_split)
+        self.discard_unlabelled = config.discard_unlabelled
 
         # MODELS AND MODEL ATTRIBUTES
         self.model_names = config.model_names
@@ -352,6 +354,16 @@ class Trainer(object):
 
             # unpack batch
             _images, _true_labels, _psuedo_labels, _unlabelled = batch
+            if self.discard_unlabelled:
+                if sum(_unlabelled) == 0:
+                    if train_mode and self.progress_bar:
+                        pbar.update(len(_unlabelled))
+                    continue
+
+                _unlabelled = _unlabelled == 1
+                _images = _images[_unlabelled]
+                _true_labels = _true_labels[_unlabelled]
+                _psuedo_labels = _psuedo_labels[_unlabelled]
 
             # place the data to the possibly multiple devices
             images, true_labels, psuedo_labels, unlabelled_mask = [], [], [], []
@@ -362,8 +374,9 @@ class Trainer(object):
                     Variable(_true_labels.clone().to(device)))
                 psuedo_labels.append(
                     _psuedo_labels[:, :, i].to(device))
-                unlabelled_mask.append(
-                    _unlabelled.to(device))
+                if self.unlabelled:
+                    unlabelled_mask.append(
+                        _unlabelled.to(device))
 
             # forward pass
             outputs = []
@@ -374,8 +387,11 @@ class Trainer(object):
             for i in range(self.model_num):
                 # supervised learning signal
                 sl_signal = self.loss_ce(outputs[i], true_labels[i])
-                sl_signal *= unlabelled_mask[i]
-                sl_signal = sl_signal.mean()
+                if self.unlabelled and not self.discard_unlabelled:
+                    sl_signal *= unlabelled_mask[i]
+                    sl_signal = sl_signal[sl_signal != 0].mean()
+                else:
+                    sl_signal = sl_signal.mean()
 
                 # update the signal for logging
                 if self.sl_condition:
@@ -418,6 +434,9 @@ class Trainer(object):
                     dml_part = self.dml_fraction * dml_signal
                     loss += dml_part
 
+                if self.discard_unlabelled:
+                    loss /= torch.mean(_unlabelled.float())
+
                 # COMPUTE GRADIENTS AND UPDATE SGD
                 if train_mode:
                     self.optimizers[i].zero_grad()
@@ -447,8 +466,7 @@ class Trainer(object):
                         sum([acc for acc in accs_at_1]) / len(accs_at_1)
                     )
                 )
-                batch_size = _images.shape[0]
-                pbar.update(batch_size)
+                pbar.update(len(_unlabelled))
 
         mode = 'train' if train_mode else 'valid'
         metrics = {
