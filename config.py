@@ -71,6 +71,9 @@ train_arg.add_argument('--lambda_b', type=float, default=0.5,
                        help='balance between DML signal and the KD signals, 1.0 is no KD signal, 0.0 is no DML signal')
 train_arg.add_argument('--temperature', type=float, default=3,
                        help='softmax temperature')
+train_arg.add_argument('--scale_dml', type=str2bool, default=False,
+                       help='Wether or not to scale the mutual learning signal according to the supervised learning signal')
+
 
 # Miscellaneous params
 misc_arg = add_argument_group('Misc.')
@@ -132,7 +135,7 @@ def get_config():
 
     # for testing purposes, will remove later
     if config.test_script:
-        config.epochs = 3
+        config.epochs = 10
         config.use_wandb = 0
 
     config.level_name = make_level_name(config)

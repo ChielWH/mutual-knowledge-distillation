@@ -59,7 +59,7 @@ class Trainer(object):
                 if config.train:
                     self.train_loader = DataLoader(
                         self.train_loader.sampler.data_source.data[
-                            :100 * config.batch_size],
+                            :250 * config.batch_size],
                         batch_size=config.batch_size
                     )
 
@@ -105,6 +105,7 @@ class Trainer(object):
         self.lambda_a = config.lambda_a
         self.lambda_b = config.lambda_b
         self.temperature = config.temperature
+        self.scale_dml = config.scale_dml
 
         # MISCELLANEOUS PARAMS
         self.model_num = len(config.model_names)
@@ -384,6 +385,20 @@ class Trainer(object):
                 outputs.append(net(images[i]))
 
             # CALCULATE AGGREGATED LOSSES AND UPDATE PARAMETERS
+            self.scale_dml = False
+            if self.scale_dml:
+                sl_signal_dml = []
+                with torch.no_grad():
+                    for i in range(self.model_num):
+                        sl_signal = self.loss_ce(outputs[i], true_labels[i])
+                        if self.unlabelled and not self.discard_unlabelled:
+                            sl_signal *= unlabelled_mask[i]
+                            sl_signal = sl_signal[sl_signal != 0].mean()
+                        else:
+                            sl_signal = sl_signal.mean()
+                        sl_signal_dml.append(sl_signal)
+                cum_sl_signals = sum(sl_signal_dml) * len(sl_signal_dml)
+
             for i in range(self.model_num):
                 # supervised learning signal
                 sl_signal = self.loss_ce(outputs[i], true_labels[i])
@@ -425,6 +440,9 @@ class Trainer(object):
                             if len(self.devices) > 1:
                                 p_j = p_j.clone().to(self.devices[i])
                             dml_signal += self.loss_kl(p_i, p_j)
+                            if self.scale_dml:
+                                dml_signal /= sl_signal_dml[i] * cum_sl_signals
+
                     dml_signal /= max(1, self.model_num - 1)
 
                     # update the signal for logging
@@ -560,15 +578,15 @@ class Trainer(object):
                 wandb.run.summary[f"{fold} test acc {model_name}"] = top1.avg
 
             if keep_track_of_results:
-                results[f'{model_name} loss'] = losses.avg
-                results[f'{model_name} top1_acc'] = top1.avg
-                results[f'{model_name} top5_acc'] = top5.avg
+                results[f'{model_name} test loss'] = losses.avg
+                results[f'{model_name} test acc @ 1'] = top1.avg
+                results[f'{model_name} test acc @ 5'] = top5.avg
                 all_accs.append(top1.avg)
 
         if keep_track_of_results:
-            results['average acc'] = sum(all_accs) / len(all_accs)
-            results['min acc'] = min(all_accs)
-            results['max acc'] = max(all_accs)
+            results['average test acc'] = sum(all_accs) / len(all_accs)
+            results['min test acc'] = min(all_accs)
+            results['max test acc'] = max(all_accs)
 
         if best:
             self.load_checkpoints(best=False, inplace=True, verbose=False)
