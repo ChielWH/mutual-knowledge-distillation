@@ -68,6 +68,7 @@ plain_cifar_book = {
     10: {
         '2': ['Conv16', 'MaxPool', 'Conv16', 'MaxPool', 'FC10'],
         '4': ['Conv16', 'Conv16', 'MaxPool', 'Conv32', 'Conv32', 'MaxPool', 'FC10'],
+        '5': ['Conv16', 'Conv16', 'MaxPool', 'Conv32', 'Conv32', 'MaxPool', 'Conv64', 'MaxPool', 'FC10'],
         '6': ['Conv16', 'Conv16', 'MaxPool', 'Conv32', 'Conv32', 'MaxPool', 'Conv64', 'Conv64', 'MaxPool', 'FC10'],
         '8': ['Conv16', 'Conv16', 'MaxPool', 'Conv32', 'Conv32', 'MaxPool', 'Conv64', 'Conv64', 'MaxPool',
               'Conv128', 'Conv128', 'MaxPool', 'FC64', 'FC10'],
@@ -77,6 +78,7 @@ plain_cifar_book = {
     100: {
         '2': ['Conv32', 'MaxPool', 'Conv32', 'MaxPool', 'FC100'],
         '4': ['Conv32', 'Conv32', 'MaxPool', 'Conv64', 'Conv64', 'MaxPool', 'FC100'],
+        '5': ['Conv32', 'Conv32', 'MaxPool', 'Conv64', 'Conv64', 'MaxPool', 'Conv128', 'MaxPool', 'FC100'],
         '6': ['Conv32', 'Conv32', 'MaxPool', 'Conv64', 'Conv64', 'MaxPool', 'Conv128', 'Conv128', 'FC100'],
         '8': ['Conv32', 'Conv32', 'MaxPool', 'Conv64', 'Conv64', 'MaxPool', 'Conv128', 'Conv128', 'MaxPool',
               'Conv256', 'Conv256', 'MaxPool', 'FC64', 'FC100'],
@@ -86,6 +88,7 @@ plain_cifar_book = {
     200: {
         '2': ['Conv32', 'MaxPool', 'Conv32', 'MaxPool', 'FC200'],
         '4': ['Conv32', 'Conv32', 'MaxPool', 'Conv64', 'Conv64', 'MaxPool', 'FC200'],
+        '5': ['Conv32', 'Conv32', 'MaxPool', 'Conv64', 'Conv64', 'MaxPool', 'Conv128', 'MaxPool', 'FC200'],
         '6': ['Conv32', 'Conv32', 'MaxPool', 'Conv64', 'Conv64', 'MaxPool', 'Conv128', 'Conv128', 'FC200'],
         '8': ['Conv32', 'Conv32', 'MaxPool', 'Conv64', 'Conv64', 'MaxPool', 'Conv128', 'Conv128', 'MaxPool',
               'Conv256', 'Conv256', 'MaxPool', 'FC64', 'FC200'],
@@ -96,6 +99,4 @@ plain_cifar_book = {
 
 
 def create_model(size, input_size, num_classes):
-    assert size in {'2', '4', '6', '8', '10'}
-    assert num_classes in {10, 100, 200}
     return ConvNetMaker(plain_cifar_book[num_classes][size], input_size)
